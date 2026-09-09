@@ -43,7 +43,7 @@ st.markdown("""
 
 # Encabezado
 st.markdown('<p class="main-title">📊 Seguimiento Financiero - Convenio 4600017482</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">Transformación Digital Salud Antioquia | Descarga en Excel y Limpieza de Datos</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">Transformación Digital Salud Antioquia | Carga Limpia de Datos</p>', unsafe_allow_html=True)
 
 # Presupuestos base
 PRESUPUESTOS = {
@@ -52,6 +52,24 @@ PRESUPUESTOS = {
     "3. Banco IDEA / Rendimientos": 1200000000
 }
 
+def sanear_dataframe(df):
+    """Limpia los nombres de columnas y datos para evitar errores de NaN en Streamlit."""
+    if df.empty:
+        return df
+    
+    # 1. Sanear nombres de columnas (reemplaza nombres NaN o vacíos)
+    nuevas_columnas = []
+    for i, col in enumerate(df.columns):
+        if pd.isna(col) or str(col).strip() == "" or "Unnamed" in str(col):
+            nuevas_columnas.append(f"Columna_{i+1}")
+        else:
+            nuevas_columnas.append(str(col).strip())
+    df.columns = nuevas_columnas
+
+    # 2. Reemplazar todos los valores NaN en las celdas por cadenas vacías
+    df = df.fillna("")
+    return df
+
 @st.cache_data(ttl=5)
 def cargar_y_limpiar_excel():
     archivos = [f for f in os.listdir('.') if f.endswith('.xlsx')]
@@ -59,24 +77,27 @@ def cargar_y_limpiar_excel():
         return pd.DataFrame(), None
     
     file_path = archivos[0]
-    df_raw = pd.read_excel(file_path)
-    
-    # Promover encabezados reales si existen
-    for idx, row in df_raw.iterrows():
-        row_str = row.astype(str).str.lower().to_list()
-        if any('factura' in x or 'concepto' in x or 'valor' in x or 'pago' in x for x in row_str):
-            df_raw.columns = df_raw.iloc[idx]
-            df_raw = df_raw.iloc[idx + 1:].reset_index(drop=True)
-            break
+    try:
+        df_raw = pd.read_excel(file_path)
+        
+        # Buscar la fila de encabezados si no está en la primera
+        for idx, row in df_raw.iterrows():
+            row_str = row.astype(str).str.lower().to_list()
+            if any('factura' in x or 'concepto' in x or 'valor' in x or 'pago' in x for x in row_str):
+                df_raw.columns = df_raw.iloc[idx]
+                df_raw = df_raw.iloc[idx + 1:].reset_index(drop=True)
+                break
 
-    # Filtrar filas de totales o vacías
-    if not df_raw.empty:
-        col_0 = df_raw.columns[0]
-        df_raw = df_raw[~df_raw[col_0].astype(str).str.upper().str.contains("TOTAL", na=False)]
-    
-    # Limpieza estricta de NaN para evitar el error de JSON en Streamlit
-    df_raw = df_raw.fillna("").astype(str)
-    return df_raw, file_path
+        # Eliminar filas de totales
+        if not df_raw.empty and len(df_raw.columns) > 0:
+            col_0 = df_raw.columns[0]
+            df_raw = df_raw[~df_raw[col_0].astype(str).str.upper().str.contains("TOTAL", na=False)]
+        
+        df_raw = sanear_dataframe(df_raw)
+        return df_raw, file_path
+    except Exception as e:
+        st.error(f"Error al leer el Excel: {e}")
+        return pd.DataFrame(), None
 
 df_excel, nombre_archivo = cargar_y_limpiar_excel()
 
@@ -135,17 +156,21 @@ st.markdown("---")
 # ----------------------------------------------------
 # SECCIÓN 3: MÉTRICAS
 # ----------------------------------------------------
-df_consolidado = pd.concat([df_excel, st.session_state.pagos_nuevos], ignore_index=True).fillna("")
+df_consolidado = pd.concat([df_excel, st.session_state.pagos_nuevos], ignore_index=True)
+df_consolidado = sanear_dataframe(df_consolidado)
 
 # Detección de columna de valor
 col_valor = None
 for c in df_consolidado.columns:
-    if any(term in str(c).lower() for term in ['valor', 'monto', 'ejecutado', 'pago', 'unnamed: 3']):
+    if any(term in str(c).lower() for term in ['valor', 'monto', 'ejecutado', 'pago', 'columna_4', 'columna_3']):
         col_valor = c
         break
 
 if col_valor:
-    df_consolidado['Valor_Limpio'] = pd.to_numeric(df_consolidado[col_valor].astype(str).str.replace('$', '').str.replace(',', ''), errors='coerce').fillna(0)
+    df_consolidado['Valor_Limpio'] = pd.to_numeric(
+        df_consolidado[col_valor].astype(str).str.replace('$', '', regex=False).str.replace(',', '', regex=False),
+        errors='coerce'
+    ).fillna(0)
 else:
     df_consolidado['Valor_Limpio'] = 0.0
 
@@ -205,16 +230,18 @@ st.markdown("---")
 # ----------------------------------------------------
 st.subheader("📋 Detalle de Registros")
 
-# Reemplazar valores vacíos para que la tabla no genere SyntaxError
-df_mostrar = df_consolidado.drop(columns=['Valor_Limpio'], errors='ignore').astype(str)
-st.dataframe(df_mostrar, use_container_width=True)
+# Preparar tabla para visualización
+df_tabla = df_consolidado.drop(columns=['Valor_Limpio'], errors='ignore').astype(str)
+
+# Mostrar la tabla limpia
+st.dataframe(df_tabla, use_container_width=True)
 
 col_d1, col_d2 = st.columns(2)
 
-# Generar archivo Excel binario
+# Generación del archivo Excel en memoria
 buffer_excel = io.BytesIO()
 with pd.ExcelWriter(buffer_excel, engine='openpyxl') as writer:
-    df_mostrar.to_excel(writer, index=False, sheet_name='Reporte_Pagos')
+    df_tabla.to_excel(writer, index=False, sheet_name='Reporte_Pagos')
 data_excel = buffer_excel.getvalue()
 
 with col_d1:
@@ -226,7 +253,7 @@ with col_d1:
     )
 
 with col_d2:
-    csv_data = df_mostrar.to_csv(index=False).encode('utf-8')
+    csv_data = df_tabla.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="📄 Descargar Reporte en CSV (.csv)",
         data=csv_data,
