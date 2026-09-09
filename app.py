@@ -1,7 +1,10 @@
 import streamlit as st
 import pandas as pd
-import os
 import io
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # Configuración de página
 st.set_page_config(
@@ -40,8 +43,8 @@ DATOS_OFICIALES = {
         "ejecutado_base": 14905908982
     },
     "2. Componente CRUE (Otrosí)": {
-        "presupuesto": 1462022598,  # Valor de adición / componentes específicos CRUE
-        "ejecutado_base": 30192830    # Pagos No. 50 y 51 autorizados
+        "presupuesto": 1462022598,
+        "ejecutado_base": 30192830
     },
     "3. Consolidado General Convenio": {
         "presupuesto": 27444961985,
@@ -59,11 +62,14 @@ componente_sel = st.radio(
 
 st.markdown("---")
 
-# Manejo de registros adicionales ingresados manualmente en la sesión
+# Inicialización de la base de datos histórica en sesión (con registros iniciales de ejemplo si está vacía)
 if "pagos_nuevos" not in st.session_state:
-    st.session_state.pagos_nuevos = pd.DataFrame(columns=["Componente", "Factura", "Fecha", "Concepto", "Valor"])
+    st.session_state.pagos_nuevos = pd.DataFrame([
+        {"Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 50", "Fecha": "2026-08-01", "Concepto": "Autorización CRUE Agosto", "Valor": 27568325.0},
+        {"Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 51", "Fecha": "2026-08-15", "Concepto": "Ajuste Autorización CRUE", "Valor": 2624505.0}
+    ])
 
-# Formulario para ingresar nuevos pagos el próximo mes
+# Formulario de Registro
 st.subheader("➕ Registrar Nuevo Pago / Factura")
 with st.form("form_nuevo_pago", clear_on_submit=True):
     col1, col2 = st.columns(2)
@@ -94,17 +100,16 @@ with st.form("form_nuevo_pago", clear_on_submit=True):
 
 st.markdown("---")
 
-# CÁLCULOS DE SALDOS Y MÉTRICAS
+# CÁLCULOS
 datos_comp = DATOS_OFICIALES[componente_sel]
 presupuesto_total = datos_comp["presupuesto"]
-ejecutado_acumulado_informe = datos_comp["ejecutado_base"]
 
-# Sumar pagos nuevos agregados manualmente en el componente seleccionado
-pagos_nuevos_comp = st.session_state.pagos_nuevos[
+# Filtrar pagos por componente seleccionado
+df_filtrado = st.session_state.pagos_nuevos[
     st.session_state.pagos_nuevos["Componente"] == componente_sel
-]["Valor"].sum() if not st.session_state.pagos_nuevos.empty else 0.0
+] if not st.session_state.pagos_nuevos.empty else pd.DataFrame()
 
-total_ejecutado_real = ejecutado_acumulado_informe + pagos_nuevos_comp
+total_ejecutado_real = df_filtrado["Valor"].sum() if not df_filtrado.empty else datos_comp["ejecutado_base"]
 saldo_disponible = presupuesto_total - total_ejecutado_real
 pct_ejecucion = (total_ejecutado_real / presupuesto_total * 100) if presupuesto_total > 0 else 0.0
 
@@ -140,7 +145,99 @@ with c3:
 
 st.progress(min(max(pct_ejecucion / 100, 0.0), 1.0))
 
-# Tabla de nuevos registros
+st.markdown("---")
+
+# HISTÓRICO Y OPCIONES DE DESCARGA
+st.subheader("📋 Histórico de Pagos y Exportación")
+
 if not st.session_state.pagos_nuevos.empty:
-    st.subheader("📋 Registros Adicionales Ingresados este Mes")
     st.dataframe(st.session_state.pagos_nuevos, use_container_width=True)
+
+    # 1. Función para generar Excel
+    def generar_excel(df):
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Historico_Pagos')
+        return output.getvalue()
+
+    # 2. Función para generar PDF
+    def generar_pdf(df, componente, presupuesto, ejecutado, saldo):
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+        elements = []
+        styles = getSampleStyleSheet()
+
+        elements.append(Paragraph(f"<b>Reporte Financiero - Convenio 4600017482</b>", styles['Title']))
+        elements.append(Paragraph(f"<b>Componente:</b> {componente}", styles['Heading2']))
+        elements.append(Spacer(1, 10))
+
+        # Resumen Métrica en PDF
+        resumen_data = [
+            ["Presupuesto Asignado", "Total Ejecutado", "Saldo Disponible"],
+            [f"${presupuesto:,.0f}", f"${ejecutado:,.0f}", f"${saldo:,.0f}"]
+        ]
+        resumen_table = Table(resumen_data, colWidths=[180, 180, 180])
+        resumen_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0,0), (-1,0), 6),
+            ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F3F4F6')),
+            ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#D1D5DB'))
+        ]))
+        elements.append(resumen_table)
+        elements.append(Spacer(1, 20))
+
+        # Detalle de Pagos
+        elements.append(Paragraph("<b>Histórico de Pagos Registrados</b>", styles['Heading3']))
+        tabla_data = [["Componente", "Factura", "Fecha", "Concepto", "Valor ($)"]]
+        for _, row in df.iterrows():
+            tabla_data.append([
+                str(row['Componente']),
+                str(row['Factura']),
+                str(row['Fecha']),
+                str(row['Concepto']),
+                f"${row['Valor']:,.2f}"
+            ])
+        
+        tabla = Table(tabla_data, colWidths=[130, 80, 70, 160, 100])
+        tabla.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2563EB')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,-1), 8),
+            ('BOTTOMPADDING', (0,0), (-1,0), 4),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E5E7EB'))
+        ]))
+        elements.append(tabla)
+
+        doc.build(elements)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+    # Botones de descarga
+    col_dl1, col_dl2 = st.columns(2)
+    
+    with col_dl1:
+        excel_data = generar_excel(st.session_state.pagos_nuevos)
+        st.download_button(
+            label="📥 Descargar Histórico en Excel",
+            data=excel_data,
+            file_name="historico_pagos_convenio.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+    with col_dl2:
+        pdf_data = generar_pdf(st.session_state.pagos_nuevos, componente_sel, presupuesto_total, total_ejecutado_real, saldo_disponible)
+        st.download_button(
+            label="📄 Descargar Reporte en PDF",
+            data=pdf_data,
+            file_name="reporte_seguimiento_financiero.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+else:
+    st.info("No hay pagos ingresados en el histórico todavía.")
