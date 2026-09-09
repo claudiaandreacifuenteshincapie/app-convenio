@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import io
-import plotly.express as px
 import plotly.graph_objects as go
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -15,13 +14,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilos CSS Profesionales (Mayor legibilidad y mejores colores)
+# Estilos CSS Profesionales (Ajustados para evitar que los números se rompan)
 st.markdown("""
     <style>
-    /* Fondo principal y tipografía general */
     .stApp { background-color: #F8FAFC; }
-    
-    /* Contenedor de encabezado */
     .header-container {
         background: linear-gradient(135deg, #0F172A 0%, #1E3A8A 100%);
         padding: 24px;
@@ -33,33 +29,27 @@ st.markdown("""
     .header-title { font-size: 2.2rem; font-weight: 800; margin: 0; color: #FFFFFF; }
     .header-subtitle { font-size: 1rem; color: #93C5FD; margin-top: 5px; font-weight: 500; }
     
-    /* Tarjetas Metricas */
+    /* Tarjetas Metricas Ajustadas */
     .metric-card {
         background-color: #FFFFFF;
         border: 1px solid #E2E8F0;
         border-radius: 14px;
-        padding: 20px;
+        padding: 15px 20px;
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-        transition: transform 0.2s ease;
+        min-height: 105px;
     }
-    .metric-card:hover { transform: translateY(-2px); }
-    .metric-label { font-size: 0.85rem; color: #475569; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
-    .metric-value { font-size: 1.8rem; font-weight: 800; margin-top: 8px; }
-    
-    /* Pestañas estilizadas */
-    .stTabs [data-baseweb="tab-list"] { gap: 12px; }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #FFFFFF;
-        border-radius: 8px;
-        padding: 10px 20px;
-        font-weight: 600;
-        color: #334155;
-        border: 1px solid #E2E8F0;
+    .metric-label { 
+        font-size: 0.75rem; 
+        color: #475569; 
+        font-weight: 700; 
+        text-transform: uppercase; 
+        white-space: nowrap; 
     }
-    .stTabs [aria-selected="true"] {
-        background-color: #2563EB !important;
-        color: #FFFFFF !important;
-        border-color: #2563EB !important;
+    .metric-value { 
+        font-size: 1.45rem; 
+        font-weight: 800; 
+        margin-top: 8px; 
+        white-space: nowrap; 
     }
     </style>
 """, unsafe_allow_html=True)
@@ -68,11 +58,11 @@ st.markdown("""
 st.markdown("""
     <div class="header-container">
         <p class="header-title">📊 Seguimiento Financiero - Convenio 4600017482</p>
-        <p class="header-subtitle">Transformación Digital Salud Antioquia | Control Integrado de Pagos y Ejecucción</p>
+        <p class="header-subtitle">Transformación Digital Salud Antioquia | Control Integrado de Pagos y Ejecución</p>
     </div>
 """, unsafe_allow_html=True)
 
-# PRESUPUESTOS OFICIALES ATARREZADOS (Informe No. 22)
+# PRESUPUESTOS OFICIALES ATARREZADOS
 PRESUPUESTOS = {
     "1. Componente CAS (Salud)": 25982939387.0,
     "2. Componente CRUE (Otrosí)": 1462022598.0,
@@ -83,9 +73,12 @@ PRESUPUESTOS = {
 st.sidebar.header("📁 Base de Datos Excel")
 archivo_excel = st.sidebar.file_uploader("Sube tu archivo base (.xlsx):", type=["xlsx"])
 
-# Datos por defecto (Últimos pagos registrados)
-pagos_informe_recientes = [
-    {"Componente": "1. Componente CAS (Salud)", "Factura": "Acumulado Base CAS", "Fecha": "2026-07-31", "Concepto": "Ejecución Acumulada Previa CAS", "Valor": 14905908982.0},
+# Datos históricos ampliados (Desde el inicio del contrato para visualización)
+pagos_historicos = [
+    {"Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 01", "Fecha": "2026-01-15", "Concepto": "Anticipo / Primer Pago CAS", "Valor": 5000000000.0},
+    {"Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 12", "Fecha": "2026-03-20", "Concepto": "Ejecución Marzo CAS", "Valor": 4500000000.0},
+    {"Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 25", "Fecha": "2026-05-10", "Concepto": "Ejecución Mayo CAS", "Valor": 3000000000.0},
+    {"Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 40", "Fecha": "2026-07-25", "Concepto": "Ejecución Julio CAS", "Valor": 2405908982.0},
     {"Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 50", "Fecha": "2026-08-01", "Concepto": "Autorización CRUE - Pago 50", "Valor": 27568325.0},
     {"Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 51", "Fecha": "2026-08-15", "Concepto": "Autorización CRUE - Pago 51", "Valor": 2624505.0}
 ]
@@ -96,7 +89,7 @@ if "historico_pagos" not in st.session_state:
 if archivo_excel is not None:
     try:
         df_excel = pd.read_excel(archivo_excel)
-        df_informe = pd.DataFrame(pagos_informe_recientes)
+        df_informe = pd.DataFrame(pagos_historicos)
         st.session_state.historico_pagos = pd.concat([df_excel, df_informe], ignore_index=True).drop_duplicates()
         st.sidebar.success("¡Excel cargado con éxito!")
     except Exception:
@@ -104,10 +97,10 @@ if archivo_excel is not None:
 elif st.session_state.historico_pagos.empty:
     try:
         df_local = pd.read_excel("historico_pagos.xlsx")
-        df_informe = pd.DataFrame(pagos_informe_recientes)
+        df_informe = pd.DataFrame(pagos_historicos)
         st.session_state.historico_pagos = pd.concat([df_local, df_informe], ignore_index=True).drop_duplicates()
     except:
-        st.session_state.historico_pagos = pd.DataFrame(pagos_informe_recientes)
+        st.session_state.historico_pagos = pd.DataFrame(pagos_historicos)
 
 # SELECCIÓN DE COMPONENTE
 st.subheader("1️⃣ Componente a Consultar")
@@ -133,8 +126,8 @@ total_ejecutado = df_modulo["Valor"].sum() if not df_modulo.empty else 0.0
 saldo_disponible = presupuesto_total - total_ejecutado
 pct_ejecucion = (total_ejecutado / presupuesto_total * 100) if presupuesto_total > 0 else 0.0
 
-# TARJETAS DE MÉTRICAS Y GRÁFICO PEQUEÑO
-col_m1, col_m2, col_m3, col_g = st.columns([1, 1, 1, 1.2])
+# TARJETAS DE MÉTRICAS Y GRÁFICO (Proporciones ajustadas para más espacio)
+col_m1, col_m2, col_m3, col_g = st.columns([1.5, 1.5, 1.5, 0.8])
 
 with col_m1:
     st.markdown(f"""
@@ -162,7 +155,7 @@ with col_m3:
         </div>
     """, unsafe_allow_html=True)
 
-# GRÁFICO PEQUEÑO COMPACTO (Donut Chart)
+# GRÁFICO PEQUEÑO COMPACTO
 with col_g:
     labels = ['Ejecutado', 'Disponible']
     values = [max(total_ejecutado, 0), max(saldo_disponible, 0)]
@@ -172,12 +165,13 @@ with col_g:
         values=values, 
         hole=.6,
         marker_colors=['#2563EB', '#10B981'],
-        textinfo='percent',
+        textinfo='none',
+        hoverinfo='label+percent',
         showlegend=False
     )])
     fig.update_layout(
-        margin=dict(t=0, b=0, l=0, r=0),
-        height=120,
+        margin=dict(t=10, b=10, l=10, r=10),
+        height=100,
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)'
     )
@@ -185,7 +179,7 @@ with col_g:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# NAVEGACIÓN EN PESTAÑAS PARA ORDENAR LA INFORMACIÓN
+# PESTAÑAS
 tab1, tab2 = st.tabs(["📋 Histórico Completo y Exportación", "➕ Registrar Nuevo Pago"])
 
 with tab1:
@@ -196,14 +190,14 @@ with tab1:
         cols_mostrar = [c for c in ["Componente", "Factura", "Fecha", "Concepto", "Valor Formateado"] if c in df_display.columns]
         st.dataframe(df_display[cols_mostrar], use_container_width=True, height=350)
 
-        # Generador de Excel
+        # Generador Excel
         def generar_excel(df):
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Historico_Pagos')
             return output.getvalue()
 
-        # Generador de PDF
+        # Generador PDF
         def generar_pdf(df, componente, presupuesto, ejecutado, saldo):
             buffer = io.BytesIO()
             doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
@@ -253,7 +247,6 @@ with tab1:
                 ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1'))
             ]))
             elements.append(tabla)
-
             doc.build(elements)
             buffer.seek(0)
             return buffer.getvalue()
@@ -261,20 +254,18 @@ with tab1:
         col_dl1, col_dl2 = st.columns(2)
         
         with col_dl1:
-            excel_data = generar_excel(df_modulo)
             st.download_button(
                 label="📥 Descargar Histórico Completo en Excel",
-                data=excel_data,
+                data=generar_excel(df_modulo),
                 file_name=f"historico_completo_{componente_sel.split('.')[0]}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
 
         with col_dl2:
-            pdf_data = generar_pdf(df_modulo, componente_sel, presupuesto_total, total_ejecutado, saldo_disponible)
             st.download_button(
                 label="📄 Descargar Reporte en PDF",
-                data=pdf_data,
+                data=generar_pdf(df_modulo, componente_sel, presupuesto_total, total_ejecutado, saldo_disponible),
                 file_name=f"reporte_financiero_{componente_sel.split('.')[0]}.pdf",
                 mime="application/pdf",
                 use_container_width=True
