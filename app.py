@@ -98,22 +98,19 @@ if archivo_excel is not None:
         df_excel.columns = [str(c).strip() for c in df_excel.columns]
         
         # Mapeo inteligente de columnas comunes
-if "Componente" not in df_excel.columns:
-    df_excel["Componente"] = "2. Componente CRUE (Otrosí)"
-if "Factura" not in df_excel.columns:
-    # Buscar una columna que parezca factura o usar índice
-    posibles_fac = [c for c in df_excel.columns if 'factura' in c.lower() or 'cuenta' in c.lower()]
-    df_excel["Factura"] = df_excel[posibles_fac[0]] if posibles_fac else "Sin Referencia"
-if "Fecha" not in df_excel.columns:
-    df_excel["Fecha"] = "2026-08-01"
-if "Concepto" not in df_excel.columns:
-    df_excel["Concepto"] = "Registro importado de archivo"
-if "Valor" not in df_excel.columns:
-    posibles_val = [c for c in df_excel.columns if 'valor' in c.lower() or 'total' in c.lower() or c.startswith('Unnamed')]
-    # Tomar la columna numérica con valores altos o la última
-    df_excel["Valor"] = 0.0
+        if "Componente" not in df_excel.columns:
+            df_excel["Componente"] = "2. Componente CRUE (Otrosí)"
+        if "Factura" not in df_excel.columns:
+            posibles_fac = [c for c in df_excel.columns if 'factura' in c.lower() or 'cuenta' in c.lower()]
+            df_excel["Factura"] = df_excel[posibles_fac[0]] if posibles_fac else "Sin Referencia"
+        if "Fecha" not in df_excel.columns:
+            df_excel["Fecha"] = "2026-08-01"
+        if "Concepto" not in df_excel.columns:
+            df_excel["Concepto"] = "Registro importado de archivo"
+        if "Valor" not in df_excel.columns:
+            posibles_val = [c for c in df_excel.columns if 'valor' in c.lower() or 'total' in c.lower() or c.startswith('Unnamed')]
+            df_excel["Valor"] = 0.0
 
-        
         # Concatenar asegurando que no se pierda el histórico base ni los nuevos
         st.session_state.historico_pagos = pd.concat([df_base_inicial, df_excel], ignore_index=True).drop_duplicates()
         st.sidebar.success("¡Base de datos cargada y sincronizada con éxito!")
