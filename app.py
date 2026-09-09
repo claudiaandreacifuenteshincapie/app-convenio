@@ -9,7 +9,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilos CSS Personalizados
+# Estilos CSS
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
@@ -41,8 +41,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Encabezado
-st.markdown('<p class="main-title">📊 Seguimiento Financiero en Tiempo Real - Convenio 4600017482</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">Transformación Digital Salud Antioquia | Lectura en vivo desde Excel + Control de Pagos</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-title">📊 Seguimiento Financiero - Convenio 4600017482</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">Transformación Digital Salud Antioquia | Limpieza de Datos y Lectura Exacta</p>', unsafe_allow_html=True)
 
 # Presupuestos base
 PRESUPUESTOS = {
@@ -51,28 +51,42 @@ PRESUPUESTOS = {
     "3. Banco IDEA / Rendimientos": 1200000000
 }
 
-# Función para cargar datos reales desde el archivo de Excel
+# Carga de datos con limpieza automática de encabezados y fila TOTALES
 @st.cache_data(ttl=5)
-def cargar_excel_real():
+def cargar_y_limpiar_excel():
     archivos = [f for f in os.listdir('.') if f.endswith('.xlsx')]
-    if archivos:
-        try:
-            # Lee la primera hoja del Excel disponible en la carpeta
-            df = pd.read_excel(archivos[0])
-            return df, archivos[0]
-        except Exception as e:
-            return pd.DataFrame(), None
-    return pd.DataFrame(), None
+    if not archivos:
+        return pd.DataFrame(), None
+    
+    file_path = archivos[0]
+    
+    # Cargar Excel omitiendo filas superiores de títulos si existen
+    df_raw = pd.read_excel(file_path)
+    
+    # Si la primera fila contiene los encabezados reales, promoverlos
+    for idx, row in df_raw.iterrows():
+        # Buscar la fila que contiene nombres de columnas reales
+        row_str = row.astype(str).str.lower().to_list()
+        if any('factura' in x or 'concepto' in x or 'valor' in x or 'pago' in x for x in row_str):
+            df_raw.columns = df_raw.iloc[idx]
+            df_raw = df_raw.iloc[idx + 1:].reset_index(drop=True)
+            break
 
-df_excel, nombre_archivo = cargar_excel_real()
+    # Eliminar filas de totales o vacías
+    if not df_raw.empty:
+        # Eliminar si la primera columna dice TOTALES
+        col_0 = df_raw.columns[0]
+        df_raw = df_raw[~df_raw[col_0].astype(str).str.upper().str.contains("TOTAL", na=False)]
+    
+    return df_raw, file_path
+
+df_excel, nombre_archivo = cargar_y_limpiar_excel()
 
 if "pagos_nuevos" not in st.session_state:
     st.session_state.pagos_nuevos = pd.DataFrame(columns=["Componente", "Factura", "Fecha", "Concepto", "Valor"])
 
 if nombre_archivo:
-    st.success(f"🟢 Archivo conectado en tiempo real: **{nombre_archivo}**")
-else:
-    st.warning("⚠️ No se encontró el archivo Excel en el repositorio. Usando estructura base.")
+    st.success(f"🟢 Lectura limpia activa desde: **{nombre_archivo}**")
 
 # ----------------------------------------------------
 # SECCIÓN 1: SELECCIÓN DE COMPONENTE
@@ -87,26 +101,26 @@ componente_sel = st.radio(
 st.markdown("---")
 
 # ----------------------------------------------------
-# SECCIÓN 2: FORMULARIO RÁPIDO PARA NUEVOS PAGOS
+# SECCIÓN 2: FORMULARIO DE INGRESO
 # ----------------------------------------------------
 st.subheader("➕ Registrar Nuevo Pago / Factura")
 
 with st.form("form_nuevo_pago", clear_on_submit=True):
     col1, col2 = st.columns(2)
     with col1:
-        num_factura = st.text_input("Número / Referencia de Factura *", placeholder="Ej: FAC-2026-001")
+        num_factura = st.text_input("Número / Referencia de Factura *")
         fecha_pago = st.date_input("Fecha de Pago")
         comp_factura = st.selectbox("Componente Asignado", options=list(PRESUPUESTOS.keys()), index=list(PRESUPUESTOS.keys()).index(componente_sel))
     
     with col2:
-        concepto = st.text_input("Concepto / Descripción *", placeholder="Ej: Abono o pago de acta mensual")
+        concepto = st.text_input("Concepto / Descripción *")
         valor_pago = st.number_input("Valor del Pago ($ COP) *", min_value=0.0, step=500000.0, format="%.2f")
     
     btn_guardar = st.form_submit_button("💾 Añadir Pago y Recalcular")
 
     if btn_guardar:
         if not num_factura or valor_pago <= 0 or not concepto:
-            st.warning("⚠️ Completa los campos requeridos: número de factura, concepto y un valor mayor a cero.")
+            st.warning("⚠️ Completa los campos obligatorios: número de factura, concepto y valor mayor a cero.")
         else:
             nuevo_registro = pd.DataFrame([{
                 "Componente": comp_factura,
@@ -116,45 +130,47 @@ with st.form("form_nuevo_pago", clear_on_submit=True):
                 "Valor": valor_pago
             }])
             st.session_state.pagos_nuevos = pd.concat([st.session_state.pagos_nuevos, nuevo_registro], ignore_index=True)
-            st.success(f"🎉 ¡Pago registrado! Se agregaron ${valor_pago:,.2f} al componente.")
+            st.success(f"🎉 ¡Pago de ${valor_pago:,.2f} registrado correctamente!")
 
 st.markdown("---")
 
 # ----------------------------------------------------
-# SECCIÓN 3: CONSOLIDACIÓN DE DATOS Y MÉTRICAS
+# SECCIÓN 3: MÉTRICAS Y DEDUCCIÓN DE COLUMNAS
 # ----------------------------------------------------
-# Mapeo y consolidación de datos del Excel con los Pagos Nuevos
-df_total = df_excel.copy() if not df_excel.empty else pd.DataFrame()
+df_consolidado = pd.concat([df_excel, st.session_state.pagos_nuevos], ignore_index=True)
 
-# Normalización de columnas si existen en el Excel
-if not df_total.empty:
-    # Intenta identificar la columna del valor en el Excel
-    cols_posibles_valor = [c for c in df_total.columns if 'valor' in str(c).lower() or 'monto' in str(c).lower() or 'ejecutado' in str(c).lower()]
-    if cols_posibles_valor:
-        df_total['Valor'] = pd.to_numeric(df_total[cols_posibles_valor[0]], errors='coerce').fillna(0)
-    elif 'Valor' not in df_total.columns:
-        df_total['Valor'] = 0.0
+# Detección inteligente de columna de valor numérico
+col_valor = None
+for c in df_consolidado.columns:
+    if any(term in str(c).lower() for term in ['valor', 'monto', 'ejecutado', 'pago', 'unnamed: 3']):
+        col_valor = c
+        break
 
-    # Intenta identificar la columna del componente
-    cols_posibles_comp = [c for c in df_total.columns if 'componente' in str(c).lower() or 'modulo' in str(c).lower()]
-    if cols_posibles_comp:
-        df_total['Componente'] = df_total[cols_posibles_comp[0]]
-    elif 'Componente' not in df_total.columns:
-        df_total['Componente'] = componente_sel
+if col_valor:
+    df_consolidado['Valor_Limpio'] = pd.to_numeric(df_consolidado[col_valor], errors='coerce').fillna(0)
+else:
+    df_consolidado['Valor_Limpio'] = 0.0
 
-# Unir histórico del Excel con nuevos pagos ingresados en la sesión
-df_consolidado = pd.concat([df_total, st.session_state.pagos_nuevos], ignore_index=True)
+# Detección inteligente de columna de componente
+col_comp = None
+for c in df_consolidado.columns:
+    if any(term in str(c).lower() for term in ['componente', 'modulo', 'convenio']):
+        col_comp = c
+        break
 
-# Filtro según componente seleccionado
-df_filtrado = df_consolidado[df_consolidado["Componente"].astype(str).str.contains(componente_sel.split('.')[1].strip().split(' ')[0], case=False, na=False)] if "Componente" in df_consolidado.columns else df_consolidado
+if col_comp:
+    filtro_key = componente_sel.split('.')[1].strip().split(' ')[0]
+    df_filtrado = df_consolidado[df_consolidado[col_comp].astype(str).str.contains(filtro_key, case=False, na=False)]
+else:
+    df_filtrado = df_consolidado
 
-# Cálculos Presupuestales
+# Cálculos
 presupuesto_total = PRESUPUESTOS[componente_sel]
-total_ejecutado = df_filtrado["Valor"].sum() if not df_filtrado.empty and "Valor" in df_filtrado.columns else 0.0
+total_ejecutado = df_filtrado['Valor_Limpio'].sum()
 saldo_disponible = presupuesto_total - total_ejecutado
 pct_ejecucion = (total_ejecutado / presupuesto_total * 100) if presupuesto_total > 0 else 0.0
 
-st.subheader(f"📈 Métricas en Tiempo Real: {componente_sel}")
+st.subheader(f"📈 Métricas Calculadas Exactas: {componente_sel}")
 
 c1, c2, c3 = st.columns(3)
 
@@ -189,19 +205,7 @@ st.progress(min(max(pct_ejecucion / 100, 0.0), 1.0))
 st.markdown("---")
 
 # ----------------------------------------------------
-# SECCIÓN 4: VISTA DE TABLA Y DESCARGA
+# SECCIÓN 4: TABLA
 # ----------------------------------------------------
-st.subheader("📋 Detalle Consolidado de Pagos")
-
-if not df_consolidado.empty:
-    st.dataframe(df_consolidado, use_container_width=True)
-    
-    csv_data = df_consolidado.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Descargar Reporte Consolidado Actualizado (CSV)",
-        data=csv_data,
-        file_name='reporte_consolidado_convenio.csv',
-        mime='text/csv',
-    )
-else:
-    st.info("No hay datos para mostrar.")
+st.subheader("📋 Detalle de Registros Leídos")
+st.dataframe(df_consolidado, use_container_width=True)
