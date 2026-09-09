@@ -9,50 +9,22 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilos CSS Personalizados para una interfaz más bonita
+# Estilos CSS Personalizados
 st.markdown("""
     <style>
-    /* Fondo general suave */
-    .main {
-        background-color: #f8f9fa;
-    }
-    
-    /* Encabezado principal */
-    .main-title {
-        color: #1E3A8A;
-        font-size: 2.2rem;
-        font-weight: 700;
-        margin-bottom: 0px;
-    }
-    .sub-title {
-        color: #4B5563;
-        font-size: 1rem;
-        margin-bottom: 25px;
-    }
-
-    /* Tarjetas de Métricas */
+    .main { background-color: #f8f9fa; }
+    .main-title { color: #1E3A8A; font-size: 2.2rem; font-weight: 700; margin-bottom: 0px; }
+    .sub-title { color: #4B5563; font-size: 1rem; margin-bottom: 25px; }
     .metric-card {
         background-color: #ffffff;
         border-radius: 12px;
         padding: 20px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         border-left: 5px solid #2563EB;
         margin-bottom: 15px;
     }
-    .metric-label {
-        font-size: 0.9rem;
-        color: #6B7280;
-        font-weight: 600;
-        text-transform: uppercase;
-    }
-    .metric-value {
-        font-size: 1.8rem;
-        font-weight: 700;
-        color: #111827;
-        margin-top: 5px;
-    }
-    
-    /* Estilo del Formulario */
+    .metric-label { font-size: 0.85rem; color: #6B7280; font-weight: 600; text-transform: uppercase; }
+    .metric-value { font-size: 1.7rem; font-weight: 700; color: #111827; margin-top: 5px; }
     div[data-testid="stForm"] {
         background-color: #ffffff;
         border-radius: 12px;
@@ -60,27 +32,17 @@ st.markdown("""
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
         border: 1px solid #E5E7EB;
     }
-
-    /* Botón personalizado */
     .stButton>button {
-        background-color: #2563EB;
-        color: white;
-        border-radius: 8px;
-        font-weight: 600;
-        border: none;
-        padding: 10px 24px;
-        transition: all 0.3s;
+        background-color: #2563EB; color: white; border-radius: 8px;
+        font-weight: 600; border: none; padding: 10px 24px;
     }
-    .stButton>button:hover {
-        background-color: #1D4ED8;
-        color: white;
-    }
+    .stButton>button:hover { background-color: #1D4ED8; color: white; }
     </style>
 """, unsafe_allow_html=True)
 
 # Encabezado
-st.markdown('<p class="main-title">📊 Seguimiento Financiero - Convenio 4600017482</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">Transformación Digital Salud Antioquia | Panel Control de Pagos y Facturación</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-title">📊 Seguimiento Financiero en Tiempo Real - Convenio 4600017482</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">Transformación Digital Salud Antioquia | Lectura en vivo desde Excel + Control de Pagos</p>', unsafe_allow_html=True)
 
 # Presupuestos base
 PRESUPUESTOS = {
@@ -89,18 +51,28 @@ PRESUPUESTOS = {
     "3. Banco IDEA / Rendimientos": 1200000000
 }
 
-# Carga de datos inicial con session_state
-if "df_pagos" not in st.session_state:
-    try:
-        archivos = [f for f in os.listdir('.') if f.startswith('Seguimiento Financiero') and f.endswith('.xlsx')]
-        if archivos:
-            st.session_state.df_pagos = pd.read_excel(archivos[0])
-        else:
-            st.session_state.df_pagos = pd.DataFrame(columns=["Componente", "Factura", "Fecha", "Concepto", "Valor"])
-    except Exception:
-        st.session_state.df_pagos = pd.DataFrame(columns=["Componente", "Factura", "Fecha", "Concepto", "Valor"])
+# Función para cargar datos reales desde el archivo de Excel
+@st.cache_data(ttl=5)
+def cargar_excel_real():
+    archivos = [f for f in os.listdir('.') if f.endswith('.xlsx')]
+    if archivos:
+        try:
+            # Lee la primera hoja del Excel disponible en la carpeta
+            df = pd.read_excel(archivos[0])
+            return df, archivos[0]
+        except Exception as e:
+            return pd.DataFrame(), None
+    return pd.DataFrame(), None
 
-st.success("✨ Sistema cargado con éxito. Interfaz mejorada y lista para registro.")
+df_excel, nombre_archivo = cargar_excel_real()
+
+if "pagos_nuevos" not in st.session_state:
+    st.session_state.pagos_nuevos = pd.DataFrame(columns=["Componente", "Factura", "Fecha", "Concepto", "Valor"])
+
+if nombre_archivo:
+    st.success(f"🟢 Archivo conectado en tiempo real: **{nombre_archivo}**")
+else:
+    st.warning("⚠️ No se encontró el archivo Excel en el repositorio. Usando estructura base.")
 
 # ----------------------------------------------------
 # SECCIÓN 1: SELECCIÓN DE COMPONENTE
@@ -115,60 +87,81 @@ componente_sel = st.radio(
 st.markdown("---")
 
 # ----------------------------------------------------
-# SECCIÓN 2: REGISTRO DE NUEVA FACTURA
+# SECCIÓN 2: FORMULARIO RÁPIDO PARA NUEVOS PAGOS
 # ----------------------------------------------------
-st.subheader("➕ Registrar Nueva Factura / Pago")
+st.subheader("➕ Registrar Nuevo Pago / Factura")
 
-with st.form("form_facturas", clear_on_submit=True):
+with st.form("form_nuevo_pago", clear_on_submit=True):
     col1, col2 = st.columns(2)
     with col1:
-        num_factura = st.text_input("Número / Referencia de Factura *", placeholder="Ej: F-12045")
-        fecha_pago = st.date_input("Fecha de Factura / Pago")
+        num_factura = st.text_input("Número / Referencia de Factura *", placeholder="Ej: FAC-2026-001")
+        fecha_pago = st.date_input("Fecha de Pago")
         comp_factura = st.selectbox("Componente Asignado", options=list(PRESUPUESTOS.keys()), index=list(PRESUPUESTOS.keys()).index(componente_sel))
     
     with col2:
-        concepto = st.text_input("Concepto / Descripción del Pago *", placeholder="Ej: Pago de servicios técnicos de software")
-        valor_factura = st.number_input("Valor de la Factura ($ COP) *", min_value=0.0, step=1000000.0, format="%.2f")
+        concepto = st.text_input("Concepto / Descripción *", placeholder="Ej: Abono o pago de acta mensual")
+        valor_pago = st.number_input("Valor del Pago ($ COP) *", min_value=0.0, step=500000.0, format="%.2f")
     
-    btn_guardar = st.form_submit_button("💾 Registar Factura y Recalcular Presupuesto")
+    btn_guardar = st.form_submit_button("💾 Añadir Pago y Recalcular")
 
     if btn_guardar:
-        if not num_factura or valor_factura <= 0 or not concepto:
-            st.warning("⚠️ Completa los campos obligatorios (*): número de factura, concepto y un valor mayor a cero.")
+        if not num_factura or valor_pago <= 0 or not concepto:
+            st.warning("⚠️ Completa los campos requeridos: número de factura, concepto y un valor mayor a cero.")
         else:
-            nueva_factura = pd.DataFrame([{
+            nuevo_registro = pd.DataFrame([{
                 "Componente": comp_factura,
                 "Factura": num_factura,
                 "Fecha": str(fecha_pago),
                 "Concepto": concepto,
-                "Valor": valor_factura
+                "Valor": valor_pago
             }])
-            st.session_state.df_pagos = pd.concat([st.session_state.df_pagos, nueva_factura], ignore_index=True)
-            st.success(f"🎉 Factura N° {num_factura} por ${valor_factura:,.2f} agregada exitosamente.")
+            st.session_state.pagos_nuevos = pd.concat([st.session_state.pagos_nuevos, nuevo_registro], ignore_index=True)
+            st.success(f"🎉 ¡Pago registrado! Se agregaron ${valor_pago:,.2f} al componente.")
 
 st.markdown("---")
 
 # ----------------------------------------------------
-# SECCIÓN 3: CÁLCULOS Y TARJETAS DINÁMICAS
+# SECCIÓN 3: CONSOLIDACIÓN DE DATOS Y MÉTRICAS
 # ----------------------------------------------------
+# Mapeo y consolidación de datos del Excel con los Pagos Nuevos
+df_total = df_excel.copy() if not df_excel.empty else pd.DataFrame()
+
+# Normalización de columnas si existen en el Excel
+if not df_total.empty:
+    # Intenta identificar la columna del valor en el Excel
+    cols_posibles_valor = [c for c in df_total.columns if 'valor' in str(c).lower() or 'monto' in str(c).lower() or 'ejecutado' in str(c).lower()]
+    if cols_posibles_valor:
+        df_total['Valor'] = pd.to_numeric(df_total[cols_posibles_valor[0]], errors='coerce').fillna(0)
+    elif 'Valor' not in df_total.columns:
+        df_total['Valor'] = 0.0
+
+    # Intenta identificar la columna del componente
+    cols_posibles_comp = [c for c in df_total.columns if 'componente' in str(c).lower() or 'modulo' in str(c).lower()]
+    if cols_posibles_comp:
+        df_total['Componente'] = df_total[cols_posibles_comp[0]]
+    elif 'Componente' not in df_total.columns:
+        df_total['Componente'] = componente_sel
+
+# Unir histórico del Excel con nuevos pagos ingresados en la sesión
+df_consolidado = pd.concat([df_total, st.session_state.pagos_nuevos], ignore_index=True)
+
+# Filtro según componente seleccionado
+df_filtrado = df_consolidado[df_consolidado["Componente"].astype(str).str.contains(componente_sel.split('.')[1].strip().split(' ')[0], case=False, na=False)] if "Componente" in df_consolidado.columns else df_consolidado
+
+# Cálculos Presupuestales
 presupuesto_total = PRESUPUESTOS[componente_sel]
-
-# Filtrar ejecuciones por el componente activo
-df_filtrado = st.session_state.df_pagos[st.session_state.df_pagos["Componente"] == componente_sel] if "Componente" in st.session_state.df_pagos.columns else pd.DataFrame()
-
 total_ejecutado = df_filtrado["Valor"].sum() if not df_filtrado.empty and "Valor" in df_filtrado.columns else 0.0
 saldo_disponible = presupuesto_total - total_ejecutado
 pct_ejecucion = (total_ejecutado / presupuesto_total * 100) if presupuesto_total > 0 else 0.0
 
-st.subheader(f"📈 Resumen Ejecución: {componente_sel}")
+st.subheader(f"📈 Métricas en Tiempo Real: {componente_sel}")
 
-# Mostrar Métricas en tarjetas estilizadas
 c1, c2, c3 = st.columns(3)
 
 with c1:
     st.markdown(f"""
         <div class="metric-card" style="border-left-color: #2563EB;">
-            <div class="metric-label">Valor Total Presupuesto</div>
+            <div class="metric-label">Presupuesto Asignado</div>
             <div class="metric-value">${presupuesto_total:,.0f}</div>
         </div>
     """, unsafe_allow_html=True)
@@ -196,19 +189,19 @@ st.progress(min(max(pct_ejecucion / 100, 0.0), 1.0))
 st.markdown("---")
 
 # ----------------------------------------------------
-# SECCIÓN 4: TABLA DE DATOS Y EXPORTACIÓN
+# SECCIÓN 4: VISTA DE TABLA Y DESCARGA
 # ----------------------------------------------------
-st.subheader("📋 Registro Histórico de Facturas y Pagos")
+st.subheader("📋 Detalle Consolidado de Pagos")
 
-if not df_filtrado.empty:
-    st.dataframe(df_filtrado, use_container_width=True)
+if not df_consolidado.empty:
+    st.dataframe(df_consolidado, use_container_width=True)
     
-    csv = st.session_state.df_pagos.to_csv(index=False).encode('utf-8')
+    csv_data = df_consolidado.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="📥 Descargar Reporte Completo (CSV)",
-        data=csv,
-        file_name='reporte_pagos_convenio.csv',
+        label="📥 Descargar Reporte Consolidado Actualizado (CSV)",
+        data=csv_data,
+        file_name='reporte_consolidado_convenio.csv',
         mime='text/csv',
     )
 else:
-    st.info("Aún no hay facturas registradas para este componente.")
+    st.info("No hay datos para mostrar.")
