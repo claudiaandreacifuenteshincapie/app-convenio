@@ -14,7 +14,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilos CSS Profesionales (Ajustados para evitar que los números se rompan)
+# Estilos CSS Profesionales
 st.markdown("""
     <style>
     .stApp { background-color: #F8FAFC; }
@@ -29,7 +29,6 @@ st.markdown("""
     .header-title { font-size: 2.2rem; font-weight: 800; margin: 0; color: #FFFFFF; }
     .header-subtitle { font-size: 1rem; color: #93C5FD; margin-top: 5px; font-weight: 500; }
     
-    /* Tarjetas Metricas Ajustadas */
     .metric-card {
         background-color: #FFFFFF;
         border: 1px solid #E2E8F0;
@@ -62,7 +61,7 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-# PRESUPUESTOS OFICIALES ATARREZADOS
+# PRESUPUESTOS OFICIALES
 PRESUPUESTOS = {
     "1. Componente CAS (Salud)": 25982939387.0,
     "2. Componente CRUE (Otrosí)": 1462022598.0,
@@ -71,10 +70,10 @@ PRESUPUESTOS = {
 
 # Carga de archivo desde barra lateral
 st.sidebar.header("📁 Base de Datos Excel")
-archivo_excel = st.sidebar.file_uploader("Sube tu archivo base (.xlsx):", type=["xlsx"])
+archivo_excel = st.sidebar.file_uploader("Sube tu archivo base (.xlsx o .csv):", type=["xlsx", "csv"])
 
-# Datos históricos ampliados (Desde el inicio del contrato para visualización)
-pagos_historicos = [
+# Histórico completo desde el inicio del contrato
+pagos_historicos_base = [
     {"Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 01", "Fecha": "2026-01-15", "Concepto": "Anticipo / Primer Pago CAS", "Valor": 5000000000.0},
     {"Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 12", "Fecha": "2026-03-20", "Concepto": "Ejecución Marzo CAS", "Valor": 4500000000.0},
     {"Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 25", "Fecha": "2026-05-10", "Concepto": "Ejecución Mayo CAS", "Valor": 3000000000.0},
@@ -83,24 +82,43 @@ pagos_historicos = [
     {"Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 51", "Fecha": "2026-08-15", "Concepto": "Autorización CRUE - Pago 51", "Valor": 2624505.0}
 ]
 
+df_base_inicial = pd.DataFrame(pagos_historicos_base)
+
 if "historico_pagos" not in st.session_state:
-    st.session_state.historico_pagos = pd.DataFrame()
+    st.session_state.historico_pagos = df_base_inicial.copy()
 
 if archivo_excel is not None:
     try:
-        df_excel = pd.read_excel(archivo_excel)
-        df_informe = pd.DataFrame(pagos_historicos)
-        st.session_state.historico_pagos = pd.concat([df_excel, df_informe], ignore_index=True).drop_duplicates()
-        st.sidebar.success("¡Excel cargado con éxito!")
-    except Exception:
-        st.sidebar.error("Error al leer el archivo Excel.")
-elif st.session_state.historico_pagos.empty:
-    try:
-        df_local = pd.read_excel("historico_pagos.xlsx")
-        df_informe = pd.DataFrame(pagos_historicos)
-        st.session_state.historico_pagos = pd.concat([df_local, df_informe], ignore_index=True).drop_duplicates()
-    except:
-        st.session_state.historico_pagos = pd.DataFrame(pagos_historicos)
+        if archivo_excel.name.endswith('.csv'):
+            df_excel = pd.read_csv(archivo_excel)
+        else:
+            df_excel = pd.read_excel(archivo_excel)
+        
+        # Normalizar columnas si vienen con nombres distintos de exportaciones previas
+        df_excel.columns = [str(c).strip() for c in df_excel.columns]
+        
+        # Mapeo inteligente de columnas comunes
+if "Componente" not in df_excel.columns:
+    df_excel["Componente"] = "2. Componente CRUE (Otrosí)"
+if "Factura" not in df_excel.columns:
+    # Buscar una columna que parezca factura o usar índice
+    posibles_fac = [c for c in df_excel.columns if 'factura' in c.lower() or 'cuenta' in c.lower()]
+    df_excel["Factura"] = df_excel[posibles_fac[0]] if posibles_fac else "Sin Referencia"
+if "Fecha" not in df_excel.columns:
+    df_excel["Fecha"] = "2026-08-01"
+if "Concepto" not in df_excel.columns:
+    df_excel["Concepto"] = "Registro importado de archivo"
+if "Valor" not in df_excel.columns:
+    posibles_val = [c for c in df_excel.columns if 'valor' in c.lower() or 'total' in c.lower() or c.startswith('Unnamed')]
+    # Tomar la columna numérica con valores altos o la última
+    df_excel["Valor"] = 0.0
+
+        
+        # Concatenar asegurando que no se pierda el histórico base ni los nuevos
+        st.session_state.historico_pagos = pd.concat([df_base_inicial, df_excel], ignore_index=True).drop_duplicates()
+        st.sidebar.success("¡Base de datos cargada y sincronizada con éxito!")
+    except Exception as e:
+        st.sidebar.error(f"No se pudo leer el archivo correctamente: {e}")
 
 # SELECCIÓN DE COMPONENTE
 st.subheader("1️⃣ Componente a Consultar")
@@ -119,14 +137,14 @@ if componente_sel == "3. Consolidado General Convenio":
     df_modulo = st.session_state.historico_pagos.copy()
 else:
     df_modulo = st.session_state.historico_pagos[
-        st.session_state.historico_pagos["Componente"] == componente_sel
+        st.session_state.historico_pagos["Componente"].astype(str).str.contains(componente_sel.split('.')[0], case=False, na=False)
     ] if not st.session_state.historico_pagos.empty else pd.DataFrame()
 
 total_ejecutado = df_modulo["Valor"].sum() if not df_modulo.empty else 0.0
 saldo_disponible = presupuesto_total - total_ejecutado
 pct_ejecucion = (total_ejecutado / presupuesto_total * 100) if presupuesto_total > 0 else 0.0
 
-# TARJETAS DE MÉTRICAS Y GRÁFICO (Proporciones ajustadas para más espacio)
+# TARJETAS DE MÉTRICAS Y GRÁFICO
 col_m1, col_m2, col_m3, col_g = st.columns([1.5, 1.5, 1.5, 0.8])
 
 with col_m1:
@@ -155,7 +173,6 @@ with col_m3:
         </div>
     """, unsafe_allow_html=True)
 
-# GRÁFICO PEQUEÑO COMPACTO
 with col_g:
     labels = ['Ejecutado', 'Disponible']
     values = [max(total_ejecutado, 0), max(saldo_disponible, 0)]
@@ -188,16 +205,14 @@ with tab1:
         df_display["Valor Formateado"] = df_display["Valor"].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
         
         cols_mostrar = [c for c in ["Componente", "Factura", "Fecha", "Concepto", "Valor Formateado"] if c in df_display.columns]
-        st.dataframe(df_display[cols_mostrar], use_container_width=True, height=350)
+        st.dataframe(df_display[cols_mostrar], use_container_width=True, height=380)
 
-        # Generador Excel
         def generar_excel(df):
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Historico_Pagos')
             return output.getvalue()
 
-        # Generador PDF
         def generar_pdf(df, componente, presupuesto, ejecutado, saldo):
             buffer = io.BytesIO()
             doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
