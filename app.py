@@ -3,6 +3,12 @@ import pandas as pd
 import os
 import io
 
+# Librerías para generación de PDF
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+
 # Configuración de página
 st.set_page_config(
     page_title="Seguimiento Financiero - Convenio 4600017482",
@@ -43,7 +49,7 @@ st.markdown("""
 
 # Encabezado
 st.markdown('<p class="main-title">📊 Seguimiento Financiero - Convenio 4600017482</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">Transformación Digital Salud Antioquia | Carga Limpia de Datos</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">Transformación Digital Salud Antioquia | Descarga de Reportes en Excel y PDF</p>', unsafe_allow_html=True)
 
 # Presupuestos base
 PRESUPUESTOS = {
@@ -53,11 +59,8 @@ PRESUPUESTOS = {
 }
 
 def sanear_dataframe(df):
-    """Limpia los nombres de columnas y datos para evitar errores de NaN en Streamlit."""
     if df.empty:
         return df
-    
-    # 1. Sanear nombres de columnas (reemplaza nombres NaN o vacíos)
     nuevas_columnas = []
     for i, col in enumerate(df.columns):
         if pd.isna(col) or str(col).strip() == "" or "Unnamed" in str(col):
@@ -65,8 +68,6 @@ def sanear_dataframe(df):
         else:
             nuevas_columnas.append(str(col).strip())
     df.columns = nuevas_columnas
-
-    # 2. Reemplazar todos los valores NaN en las celdas por cadenas vacías
     df = df.fillna("")
     return df
 
@@ -79,8 +80,6 @@ def cargar_y_limpiar_excel():
     file_path = archivos[0]
     try:
         df_raw = pd.read_excel(file_path)
-        
-        # Buscar la fila de encabezados si no está en la primera
         for idx, row in df_raw.iterrows():
             row_str = row.astype(str).str.lower().to_list()
             if any('factura' in x or 'concepto' in x or 'valor' in x or 'pago' in x for x in row_str):
@@ -88,7 +87,6 @@ def cargar_y_limpiar_excel():
                 df_raw = df_raw.iloc[idx + 1:].reset_index(drop=True)
                 break
 
-        # Eliminar filas de totales
         if not df_raw.empty and len(df_raw.columns) > 0:
             col_0 = df_raw.columns[0]
             df_raw = df_raw[~df_raw[col_0].astype(str).str.upper().str.contains("TOTAL", na=False)]
@@ -159,7 +157,6 @@ st.markdown("---")
 df_consolidado = pd.concat([df_excel, st.session_state.pagos_nuevos], ignore_index=True)
 df_consolidado = sanear_dataframe(df_consolidado)
 
-# Detección de columna de valor
 col_valor = None
 for c in df_consolidado.columns:
     if any(term in str(c).lower() for term in ['valor', 'monto', 'ejecutado', 'pago', 'columna_4', 'columna_3']):
@@ -226,19 +223,16 @@ st.progress(min(max(pct_ejecucion / 100, 0.0), 1.0))
 st.markdown("---")
 
 # ----------------------------------------------------
-# SECCIÓN 4: TABLA Y DESCARGA EXCEL / CSV
+# SECCIÓN 4: TABLA Y DESCARGA EXCEL / PDF
 # ----------------------------------------------------
 st.subheader("📋 Detalle de Registros")
 
-# Preparar tabla para visualización
 df_tabla = df_consolidado.drop(columns=['Valor_Limpio'], errors='ignore').astype(str)
-
-# Mostrar la tabla limpia
 st.dataframe(df_tabla, use_container_width=True)
 
 col_d1, col_d2 = st.columns(2)
 
-# Generación del archivo Excel en memoria
+# 1. Generación de Excel
 buffer_excel = io.BytesIO()
 with pd.ExcelWriter(buffer_excel, engine='openpyxl') as writer:
     df_tabla.to_excel(writer, index=False, sheet_name='Reporte_Pagos')
@@ -248,15 +242,90 @@ with col_d1:
     st.download_button(
         label="📊 Descargar Reporte en Excel (.xlsx)",
         data=data_excel,
-        file_name='reporte_consolidado_convenio.xlsx',
+        file_name='reporte_convenio_4600017482.xlsx',
         mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
 
-with col_d2:
-    csv_data = df_tabla.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📄 Descargar Reporte en CSV (.csv)",
-        data=csv_data,
-        file_name='reporte_consolidado_convenio.csv',
-        mime='text/csv',
+# 2. Generación de PDF
+def generar_pdf(df, componente, p_total, ejecutado, saldo):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
+    story = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'TitleStyle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        textColor=colors.HexColor('#1E3A8A'),
+        spaceAfter=10
     )
+    subtitle_style = ParagraphStyle(
+        'SubTitleStyle',
+        parent=styles['Normal'],
+        fontSize=10,
+        textColor=colors.HexColor('#4B5563'),
+        spaceAfter=15
+    )
+    
+    story.append(Paragraph("<b>Reporte de Seguimiento Financiero - Convenio 4600017482</b>", title_style))
+    story.append(Paragraph(f"<b>Componente:</b> {componente} | Transformación Digital Salud Antioquia", subtitle_style))
+    
+    # Resumen Ejecutivo
+    resumen_data = [
+        ["Presupuesto Asignado", "Total Ejecutado", "Saldo Disponible"],
+        [f"${p_total:,.0f}", f"${ejecutado:,.0f}", f"${saldo:,.0f}"]
+    ]
+    t_resumen = Table(resumen_data, colWidths=[240, 240, 240])
+    t_resumen.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2563EB')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('BOTTOMPADDING', (0,0), (-1,0), 6),
+        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F3F4F6')),
+        ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#D1D5DB')),
+        ('FONTSIZE', (0,0), (-1,-1), 10),
+    ]))
+    story.append(t_resumen)
+    story.append(Spacer(1, 15))
+    
+    # Tabla de Registros (Limitada a las primeras 10 columnas si hay muchas)
+    cols_pdf = list(df.columns)[:8]
+    df_pdf = df[cols_pdf]
+    
+    table_data = [cols_pdf] + df_pdf.values.tolist()
+    # Recortar textos largos para que quepan bien
+    table_data_clean = []
+    for row in table_data:
+        new_row = [str(cell)[:35] + ("..." if len(str(cell)) > 35 else "") for cell in row]
+        table_data_clean.append(new_row)
+
+    t_detalle = Table(table_data_clean, repeatRows=1)
+    t_detalle.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,-1), 7),
+        ('BOTTOMPADDING', (0,0), (-1,0), 4),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E5E7EB')),
+    ]))
+    story.append(t_detalle)
+    
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+try:
+    pdf_bytes = generar_pdf(df_tabla, componente_sel, presupuesto_total, total_ejecutado, saldo_disponible)
+    with col_d2:
+        st.download_button(
+            label="📄 Descargar Reporte en PDF (.pdf)",
+            data=pdf_bytes,
+            file_name='reporte_convenio_4600017482.pdf',
+            mime='application/pdf',
+        )
+except Exception as e:
+    with col_d2:
+        st.warning(f"No se pudo construir el PDF: {e}")
