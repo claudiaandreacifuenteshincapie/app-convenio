@@ -6,7 +6,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 
-# Configuración de página
+# Configuración de la página
 st.set_page_config(
     page_title="Seguimiento Financiero - Convenio 4600017482",
     page_icon="📊",
@@ -34,7 +34,7 @@ st.markdown("""
 
 # Encabezado
 st.markdown('<p class="main-title">📊 Seguimiento Financiero - Convenio 4600017482</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">Transformación Digital Salud Antioquia | Cifras Aterrizadas e Histórico Completo</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">Transformación Digital Salud Antioquia | Histórico Completo Integrado</p>', unsafe_allow_html=True)
 
 # PRESUPUESTOS OFICIALES ATARREZADOS (Informe No. 22)
 PRESUPUESTOS = {
@@ -43,18 +43,41 @@ PRESUPUESTOS = {
     "3. Consolidado General Convenio": 27444961985.0
 }
 
-# Cargar/Inicializar la base de datos completa (Consolidando Excel anterior + Informe 22)
-if "historico_pagos" not in st.session_state:
-    st.session_state.historico_pagos = pd.DataFrame([
-        # Base inicial del Excel que ya teníamos adelantada (Componente CAS)
-        {"Componente": "1. Componente CAS (Salud)", "Factura": "Acumulado Base CAS", "Fecha": "2026-07-31", "Concepto": "Ejecución Acumulada Previa CAS", "Valor": 14905908982.0},
-        
-        # Histórico de Pagos y Autorizaciones CRUE (Informe No. 22)
-        {"Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 50", "Fecha": "2026-08-01", "Concepto": "Autorización CRUE - Pago 50", "Valor": 27568325.0},
-        {"Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 51", "Fecha": "2026-08-15", "Concepto": "Autorización CRUE - Pago 51", "Valor": 2624505.0}
-    ])
+# 1️⃣ CARGA O LECTURA DEL EXCEL ORIGINAL
+st.sidebar.header("📁 Base de Datos Excel")
+archivo_excel = st.sidebar.file_uploader("Sube tu archivo de Excel base (.xlsx):", type=["xlsx"])
 
-# 1️⃣ SELECCIÓN DE COMPONENTE
+# Datos por defecto (Últimos pagos del informe)
+pagos_informe_recientes = [
+    {"Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 50", "Fecha": "2026-08-01", "Concepto": "Autorización CRUE - Pago 50", "Valor": 27568325.0},
+    {"Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 51", "Fecha": "2026-08-15", "Concepto": "Autorización CRUE - Pago 51", "Valor": 2624505.0}
+]
+
+if "historico_pagos" not in st.session_state:
+    st.session_state.historico_pagos = pd.DataFrame()
+
+# Si el usuario sube el Excel, leemos todas las filas reales
+if archivo_excel is not None:
+    try:
+        df_excel = pd.read_excel(archivo_excel)
+        # Unimos las filas del Excel con los últimos pagos del informe
+        df_informe = pd.DataFrame(pagos_informe_recientes)
+        st.session_state.historico_pagos = pd.concat([df_excel, df_informe], ignore_index=True)
+        st.sidebar.success("¡Excel cargado con éxito!")
+    except Exception as e:
+        st.sidebar.error("Error al leer el archivo Excel.")
+
+# Si no ha subido archivo, intentamos leer 'historico_pagos.xlsx' del repositorio local
+elif st.session_state.historico_pagos.empty:
+    try:
+        df_local = pd.read_excel("historico_pagos.xlsx")
+        df_informe = pd.DataFrame(pagos_informe_recientes)
+        st.session_state.historico_pagos = pd.concat([df_local, df_informe], ignore_index=True)
+    except:
+        # Estructura por defecto si no encuentra el archivo físico
+        st.session_state.historico_pagos = pd.DataFrame(pagos_informe_recientes)
+
+# 2️⃣ SELECCIÓN DE COMPONENTE
 st.subheader("1️⃣ Selección de Componente a Consultar")
 componente_sel = st.radio(
     "Selecciona el módulo financiero:",
@@ -64,7 +87,7 @@ componente_sel = st.radio(
 
 st.markdown("---")
 
-# 2️⃣ FORMULARIO PARA AGREGAR NUEVOS PAGOS
+# 3️⃣ FORMULARIO PARA REGISTRAR NUEVOS PAGOS
 st.subheader("➕ Registrar Nuevo Pago / Factura")
 with st.form("form_nuevo_pago", clear_on_submit=True):
     col1, col2 = st.columns(2)
@@ -81,7 +104,7 @@ with st.form("form_nuevo_pago", clear_on_submit=True):
 
     if btn_guardar:
         if not num_factura or valor_pago <= 0 or not concepto:
-            st.warning("⚠️ Por favor completa todos los campos obligatorios.")
+            st.warning("⚠️ Completa los campos obligatorios.")
         else:
             nuevo_registro = pd.DataFrame([{
                 "Componente": comp_factura,
@@ -95,16 +118,15 @@ with st.form("form_nuevo_pago", clear_on_submit=True):
 
 st.markdown("---")
 
-# 3️⃣ CÁLCULOS Y MÉTRICAS
+# 4️⃣ CÁLCULOS Y MÉTRICAS
 presupuesto_total = PRESUPUESTOS[componente_sel]
 
-# Filtrado dinámico según la pestaña seleccionada
 if componente_sel == "3. Consolidado General Convenio":
     df_modulo = st.session_state.historico_pagos.copy()
 else:
     df_modulo = st.session_state.historico_pagos[
         st.session_state.historico_pagos["Componente"] == componente_sel
-    ]
+    ] if not st.session_state.historico_pagos.empty else pd.DataFrame()
 
 total_ejecutado = df_modulo["Valor"].sum() if not df_modulo.empty else 0.0
 saldo_disponible = presupuesto_total - total_ejecutado
@@ -144,23 +166,24 @@ st.progress(min(max(pct_ejecucion / 100, 0.0), 1.0))
 
 st.markdown("---")
 
-# 4️⃣ HISTÓRICO VISIBLE Y DESCARGAS (EXCEL Y PDF)
-st.subheader("📋 Histórico Completo de Pagos y Descarga")
+# 5️⃣ HISTÓRICO VISIBLE Y EXPORTACIÓN COMPLETA
+st.subheader("📋 Histórico Completo Detallado de Pagos")
 
 if not df_modulo.empty:
-    # Muestra el histórico formateado con las cifras de los pagos
     df_display = df_modulo.copy()
-    df_display["Valor Formateado"] = df_display["Valor"].apply(lambda x: f"${x:,.2f}")
-    st.dataframe(df_display[["Componente", "Factura", "Fecha", "Concepto", "Valor Formateado"]], use_container_width=True)
+    df_display["Valor Formateado"] = df_display["Valor"].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
+    
+    cols_mostrar = [c for c in ["Componente", "Factura", "Fecha", "Concepto", "Valor Formateado"] if c in df_display.columns]
+    st.dataframe(df_display[cols_mostrar], use_container_width=True)
 
-    # Función para generar Excel
+    # Exportar a Excel manteniendo todas las columnas y filas detalladas
     def generar_excel(df):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Historico_Pagos')
         return output.getvalue()
 
-    # Función para generar PDF
+    # Exportar a PDF
     def generar_pdf(df, componente, presupuesto, ejecutado, saldo):
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
@@ -171,7 +194,6 @@ if not df_modulo.empty:
         elements.append(Paragraph(f"<b>Módulo:</b> {componente}", styles['Heading2']))
         elements.append(Spacer(1, 10))
 
-        # Cuadro resumido
         resumen_data = [
             ["Presupuesto Asignado", "Total Ejecutado", "Saldo Disponible"],
             [f"${presupuesto:,.0f}", f"${ejecutado:,.0f}", f"${saldo:,.0f}"]
@@ -189,16 +211,15 @@ if not df_modulo.empty:
         elements.append(resumen_table)
         elements.append(Spacer(1, 20))
 
-        # Detalle de Pagos
         elements.append(Paragraph("<b>Detalle Histórico de Pagos</b>", styles['Heading3']))
         tabla_data = [["Componente", "Factura", "Fecha", "Concepto", "Valor ($)"]]
         for _, row in df.iterrows():
             tabla_data.append([
-                str(row['Componente']),
-                str(row['Factura']),
-                str(row['Fecha']),
-                str(row['Concepto']),
-                f"${row['Valor']:,.2f}"
+                str(row.get('Componente', '')),
+                str(row.get('Factura', '')),
+                str(row.get('Fecha', '')),
+                str(row.get('Concepto', '')),
+                f"${row.get('Valor', 0):,.2f}"
             ])
         
         tabla = Table(tabla_data, colWidths=[120, 80, 70, 170, 100])
@@ -222,9 +243,9 @@ if not df_modulo.empty:
     with col_dl1:
         excel_data = generar_excel(df_modulo)
         st.download_button(
-            label="📥 Descargar Histórico en Excel",
+            label="📥 Descargar Histórico Completo en Excel",
             data=excel_data,
-            file_name=f"historico_pagos_{componente_sel.split('.')[0]}.xlsx",
+            file_name=f"historico_completo_{componente_sel.split('.')[0]}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
@@ -239,4 +260,4 @@ if not df_modulo.empty:
             use_container_width=True
         )
 else:
-    st.info("No hay registros disponibles para el componente seleccionado.")
+    st.info("Sube tu archivo de Excel base en el menú lateral izquierdo para ver todo el histórico.")
