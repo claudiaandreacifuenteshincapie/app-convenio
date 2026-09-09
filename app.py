@@ -61,25 +61,39 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-# PRESUPUESTOS OFICIALES
-PRESUPUESTOS = {
-    "1. Componente CAS (Salud)": 25982939387.0,
-    "2. Componente CRUE (Otrosí)": 1462022598.0,
-    "3. Consolidado General Convenio": 27444961985.0
+# SELECTOR DE VIGENCIA EN BARRA LATERAL
+st.sidebar.header("⚙️ Configuración y Carga")
+vigencia_sel = st.sidebar.selectbox("Selecciona la Vigencia:", options=["2026", "2027"], index=0)
+
+# PRESUPUESTOS OFICIALES POR VIGENCIA
+PRESUPUESTOS_VIGENCIA = {
+    "2026": {
+        "1. Componente CAS (Salud)": 25982939387.0,
+        "2. Componente CRUE (Otrosí)": 1462022598.0,
+        "3. Consolidado General Convenio": 27444961985.0
+    },
+    "2027": {
+        "1. Componente CAS (Salud)": 12000000000.0,
+        "2. Componente CRUE (Otrosí)": 800000000.0,
+        "3. Consolidado General Convenio": 12800000000.0
+    }
 }
 
+PRESUPUESTOS = PRESUPUESTOS_VIGENCIA[vigencia_sel]
+
 # Carga de archivo desde barra lateral
-st.sidebar.header("📁 Base de Datos Excel")
 archivo_excel = st.sidebar.file_uploader("Sube tu archivo base (.xlsx o .csv):", type=["xlsx", "csv"])
 
-# Histórico completo desde el inicio del contrato
+# Histórico completo base (incluyendo 2026 y 2027)
 pagos_historicos_base = [
-    {"Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 01", "Fecha": "2026-01-15", "Concepto": "Anticipo / Primer Pago CAS", "Valor": 5000000000.0},
-    {"Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 12", "Fecha": "2026-03-20", "Concepto": "Ejecución Marzo CAS", "Valor": 4500000000.0},
-    {"Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 25", "Fecha": "2026-05-10", "Concepto": "Ejecución Mayo CAS", "Valor": 3000000000.0},
-    {"Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 40", "Fecha": "2026-07-25", "Concepto": "Ejecución Julio CAS", "Valor": 2405908982.0},
-    {"Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 50", "Fecha": "2026-08-01", "Concepto": "Autorización CRUE - Pago 50", "Valor": 27568325.0},
-    {"Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 51", "Fecha": "2026-08-15", "Concepto": "Autorización CRUE - Pago 51", "Valor": 2624505.0}
+    {"Vigencia": "2026", "Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 01", "Fecha": "2026-01-15", "Concepto": "Anticipo / Primer Pago CAS", "Valor": 5000000000.0},
+    {"Vigencia": "2026", "Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 12", "Fecha": "2026-03-20", "Concepto": "Ejecución Marzo CAS", "Valor": 4500000000.0},
+    {"Vigencia": "2026", "Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 25", "Fecha": "2026-05-10", "Concepto": "Ejecución Mayo CAS", "Valor": 3000000000.0},
+    {"Vigencia": "2026", "Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 40", "Fecha": "2026-07-25", "Concepto": "Ejecución Julio CAS", "Valor": 2405908982.0},
+    {"Vigencia": "2026", "Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 50", "Fecha": "2026-08-01", "Concepto": "Autorización CRUE - Pago 50", "Valor": 27568325.0},
+    {"Vigencia": "2026", "Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 51", "Fecha": "2026-08-15", "Concepto": "Autorización CRUE - Pago 51", "Valor": 2624505.0},
+    {"Vigencia": "2027", "Componente": "1. Componente CAS (Salud)", "Factura": "Pago No. 52", "Fecha": "2027-01-20", "Concepto": "Primer Pago Vigencia 2027 CAS", "Valor": 1500000000.0},
+    {"Vigencia": "2027", "Componente": "2. Componente CRUE (Otrosí)", "Factura": "Pago No. 53", "Fecha": "2027-02-10", "Concepto": "Autorización CRUE 2027", "Valor": 50000000.0}
 ]
 
 df_base_inicial = pd.DataFrame(pagos_historicos_base)
@@ -94,31 +108,30 @@ if archivo_excel is not None:
         else:
             df_excel = pd.read_excel(archivo_excel)
         
-        # Normalizar columnas si vienen con nombres distintos de exportaciones previas
+        # Normalizar columnas
         df_excel.columns = [str(c).strip() for c in df_excel.columns]
         
-        # Mapeo inteligente de columnas comunes
+        if "Vigencia" not in df_excel.columns:
+            df_excel["Vigencia"] = vigencia_sel
         if "Componente" not in df_excel.columns:
             df_excel["Componente"] = "2. Componente CRUE (Otrosí)"
         if "Factura" not in df_excel.columns:
             posibles_fac = [c for c in df_excel.columns if 'factura' in c.lower() or 'cuenta' in c.lower()]
             df_excel["Factura"] = df_excel[posibles_fac[0]] if posibles_fac else "Sin Referencia"
         if "Fecha" not in df_excel.columns:
-            df_excel["Fecha"] = "2026-08-01"
+            df_excel["Fecha"] = f"{vigencia_sel}-01-01"
         if "Concepto" not in df_excel.columns:
-            df_excel["Concepto"] = "Registro importado de archivo"
+            df_excel["Concepto"] = "Registro importado"
         if "Valor" not in df_excel.columns:
-            posibles_val = [c for c in df_excel.columns if 'valor' in c.lower() or 'total' in c.lower() or c.startswith('Unnamed')]
             df_excel["Valor"] = 0.0
 
-        # Concatenar asegurando que no se pierda el histórico base ni los nuevos
-        st.session_state.historico_pagos = pd.concat([df_base_inicial, df_excel], ignore_index=True).drop_duplicates()
-        st.sidebar.success("¡Base de datos cargada y sincronizada con éxito!")
+        st.session_state.historico_pagos = pd.concat([st.session_state.historico_pagos, df_excel], ignore_index=True).drop_duplicates()
+        st.sidebar.success("¡Base de datos cargada con éxito!")
     except Exception as e:
-        st.sidebar.error(f"No se pudo leer el archivo correctamente: {e}")
+        st.sidebar.error(f"Error al leer el archivo: {e}")
 
 # SELECCIÓN DE COMPONENTE
-st.subheader("1️⃣ Componente a Consultar")
+st.subheader(f"1️⃣ Componente a Consultar - Vigencia {vigencia_sel}")
 componente_sel = st.radio(
     "Selecciona el módulo:",
     options=list(PRESUPUESTOS.keys()),
@@ -127,15 +140,19 @@ componente_sel = st.radio(
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# CÁLCULOS
+# FILTRAR POR VIGENCIA Y COMPONENTE
 presupuesto_total = PRESUPUESTOS[componente_sel]
 
+df_vigencia = st.session_state.historico_pagos[
+    st.session_state.historico_pagos["Vigencia"].astype(str) == vigencia_sel
+] if not st.session_state.historico_pagos.empty else pd.DataFrame()
+
 if componente_sel == "3. Consolidado General Convenio":
-    df_modulo = st.session_state.historico_pagos.copy()
+    df_modulo = df_vigencia.copy()
 else:
-    df_modulo = st.session_state.historico_pagos[
-        st.session_state.historico_pagos["Componente"].astype(str).str.contains(componente_sel.split('.')[0], case=False, na=False)
-    ] if not st.session_state.historico_pagos.empty else pd.DataFrame()
+    df_modulo = df_vigencia[
+        df_vigencia["Componente"].astype(str).str.contains(componente_sel.split('.')[0], case=False, na=False)
+    ] if not df_vigencia.empty else pd.DataFrame()
 
 total_ejecutado = df_modulo["Valor"].sum() if not df_modulo.empty else 0.0
 saldo_disponible = presupuesto_total - total_ejecutado
@@ -147,7 +164,7 @@ col_m1, col_m2, col_m3, col_g = st.columns([1.5, 1.5, 1.5, 0.8])
 with col_m1:
     st.markdown(f"""
         <div class="metric-card" style="border-left: 5px solid #2563EB;">
-            <div class="metric-label">Presupuesto Asignado</div>
+            <div class="metric-label">Presupuesto Asignado ({vigencia_sel})</div>
             <div class="metric-value" style="color: #1E293B;">${presupuesto_total:,.0f}</div>
         </div>
     """, unsafe_allow_html=True)
@@ -201,23 +218,23 @@ with tab1:
         df_display = df_modulo.copy()
         df_display["Valor Formateado"] = df_display["Valor"].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "$0.00")
         
-        cols_mostrar = [c for c in ["Componente", "Factura", "Fecha", "Concepto", "Valor Formateado"] if c in df_display.columns]
+        cols_mostrar = [c for c in ["Vigencia", "Componente", "Factura", "Fecha", "Concepto", "Valor Formateado"] if c in df_display.columns]
         st.dataframe(df_display[cols_mostrar], use_container_width=True, height=380)
 
         def generar_excel(df):
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Historico_Pagos')
+                df.to_excel(writer, index=False, sheet_name=f'Historico_{vigencia_sel}')
             return output.getvalue()
 
-        def generar_pdf(df, componente, presupuesto, ejecutado, saldo):
+        def generar_pdf(df, componente, presupuesto, ejecutado, saldo, vigencia):
             buffer = io.BytesIO()
             doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
             elements = []
             styles = getSampleStyleSheet()
 
-            elements.append(Paragraph(f"<b>Reporte Financiero - Convenio 4600017482</b>", styles['Title']))
-            elements.append(Paragraph(f"<b>Módulo:</b> {componente}", styles['Heading2']))
+            elements.append(Paragraph(f"<b>Reporte Financiero - Vigencia {vigencia}</b>", styles['Title']))
+            elements.append(Paragraph(f"<b>Convenio:</b> 4600017482 | <b>Módulo:</b> {componente}", styles['Heading2']))
             elements.append(Spacer(1, 10))
 
             resumen_data = [
@@ -238,9 +255,10 @@ with tab1:
             elements.append(Spacer(1, 20))
 
             elements.append(Paragraph("<b>Detalle Histórico de Pagos</b>", styles['Heading3']))
-            tabla_data = [["Componente", "Factura", "Fecha", "Concepto", "Valor ($)"]]
+            tabla_data = [["Vigencia", "Componente", "Factura", "Fecha", "Concepto", "Valor ($)"]]
             for _, row in df.iterrows():
                 tabla_data.append([
+                    str(row.get('Vigencia', '')),
                     str(row.get('Componente', '')),
                     str(row.get('Factura', '')),
                     str(row.get('Fecha', '')),
@@ -248,7 +266,7 @@ with tab1:
                     f"${row.get('Valor', 0):,.2f}"
                 ])
             
-            tabla = Table(tabla_data, colWidths=[120, 80, 70, 170, 100])
+            tabla = Table(tabla_data, colWidths=[60, 110, 70, 65, 135, 90])
             tabla.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2563EB')),
                 ('TEXTCOLOR', (0,0), (-1,0), colors.white),
@@ -267,26 +285,27 @@ with tab1:
         
         with col_dl1:
             st.download_button(
-                label="📥 Descargar Histórico Completo en Excel",
+                label=f"📥 Descargar Histórico Vigencia {vigencia_sel} (Excel)",
                 data=generar_excel(df_modulo),
-                file_name=f"historico_completo_{componente_sel.split('.')[0]}.xlsx",
+                file_name=f"historico_{vigencia_sel}_{componente_sel.split('.')[0]}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
 
         with col_dl2:
             st.download_button(
-                label="📄 Descargar Reporte en PDF",
-                data=generar_pdf(df_modulo, componente_sel, presupuesto_total, total_ejecutado, saldo_disponible),
-                file_name=f"reporte_financiero_{componente_sel.split('.')[0]}.pdf",
+                label=f"📄 Descargar Reporte Vigencia {vigencia_sel} (PDF)",
+                data=generar_pdf(df_modulo, componente_sel, presupuesto_total, total_ejecutado, saldo_disponible, vigencia_sel),
+                file_name=f"reporte_{vigencia_sel}_{componente_sel.split('.')[0]}.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
     else:
-        st.info("No hay registros disponibles para el componente seleccionado.")
+        st.info(f"No hay registros disponibles para la vigencia {vigencia_sel} y el componente seleccionado.")
 
 with tab2:
     with st.form("form_nuevo_pago", clear_on_submit=True):
+        st.markdown(f"**Registrando pago para la vigencia activa: {vigencia_sel}**")
         col1, col2 = st.columns(2)
         with col1:
             num_factura = st.text_input("Número / Referencia de Factura / Cuenta *")
@@ -304,6 +323,7 @@ with tab2:
                 st.warning("⚠️ Completa todos los campos obligatorios.")
             else:
                 nuevo_registro = pd.DataFrame([{
+                    "Vigencia": vigencia_sel,
                     "Componente": comp_factura,
                     "Factura": num_factura,
                     "Fecha": str(fecha_pago),
@@ -311,4 +331,4 @@ with tab2:
                     "Valor": valor_pago
                 }])
                 st.session_state.historico_pagos = pd.concat([st.session_state.historico_pagos, nuevo_registro], ignore_index=True)
-                st.success(f"🎉 ¡Pago registrado con éxito por ${valor_pago:,.2f}!")
+                st.success(f"🎉 ¡Pago registrado con éxito para el año {vigencia_sel} por ${valor_pago:,.2f}!")
