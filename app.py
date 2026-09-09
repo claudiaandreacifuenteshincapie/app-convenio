@@ -82,7 +82,7 @@ def cargar_y_limpiar_excel():
         df_raw = pd.read_excel(file_path)
         for idx, row in df_raw.iterrows():
             row_str = row.astype(str).str.lower().to_list()
-            if any('factura' in x or 'concepto' in x or 'valor' in x or 'pago' in x for x in row_str):
+            if any('factura' in x or 'concepto' in x or 'valor' in x or 'pago' in x or 'retiro' in x or 'saldo' in x for x in row_str):
                 df_raw.columns = df_raw.iloc[idx]
                 df_raw = df_raw.iloc[idx + 1:].reset_index(drop=True)
                 break
@@ -157,9 +157,11 @@ st.markdown("---")
 df_consolidado = pd.concat([df_excel, st.session_state.pagos_nuevos], ignore_index=True)
 df_consolidado = sanear_dataframe(df_consolidado)
 
+# Detección flexibilizada de la columna de valor/retiros
 col_valor = None
 for c in df_consolidado.columns:
-    if any(term in str(c).lower() for term in ['valor', 'monto', 'ejecutado', 'pago', 'columna_4', 'columna_3']):
+    c_lower = str(c).lower()
+    if any(term in c_lower for term in ['retiro', 'valor', 'monto', 'ejecutado', 'pago', 'egreso']):
         col_valor = c
         break
 
@@ -177,9 +179,12 @@ for c in df_consolidado.columns:
         col_comp = c
         break
 
+# Filtrado por componente si la columna existe, o cálculo directo
 if col_comp:
     filtro_key = componente_sel.split('.')[1].strip().split(' ')[0]
     df_filtrado = df_consolidado[df_consolidado[col_comp].astype(str).str.contains(filtro_key, case=False, na=False)]
+    if df_filtrado.empty:
+        df_filtrado = df_consolidado
 else:
     df_filtrado = df_consolidado
 
@@ -232,7 +237,7 @@ st.dataframe(df_tabla, use_container_width=True)
 
 col_d1, col_d2 = st.columns(2)
 
-# 1. Generación de Excel
+# 1. Excel
 buffer_excel = io.BytesIO()
 with pd.ExcelWriter(buffer_excel, engine='openpyxl') as writer:
     df_tabla.to_excel(writer, index=False, sheet_name='Reporte_Pagos')
@@ -246,7 +251,7 @@ with col_d1:
         mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
 
-# 2. Generación de PDF
+# 2. PDF
 def generar_pdf(df, componente, p_total, ejecutado, saldo):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
@@ -271,7 +276,6 @@ def generar_pdf(df, componente, p_total, ejecutado, saldo):
     story.append(Paragraph("<b>Reporte de Seguimiento Financiero - Convenio 4600017482</b>", title_style))
     story.append(Paragraph(f"<b>Componente:</b> {componente} | Transformación Digital Salud Antioquia", subtitle_style))
     
-    # Resumen Ejecutivo
     resumen_data = [
         ["Presupuesto Asignado", "Total Ejecutado", "Saldo Disponible"],
         [f"${p_total:,.0f}", f"${ejecutado:,.0f}", f"${saldo:,.0f}"]
@@ -290,12 +294,10 @@ def generar_pdf(df, componente, p_total, ejecutado, saldo):
     story.append(t_resumen)
     story.append(Spacer(1, 15))
     
-    # Tabla de Registros (Limitada a las primeras 10 columnas si hay muchas)
     cols_pdf = list(df.columns)[:8]
     df_pdf = df[cols_pdf]
     
     table_data = [cols_pdf] + df_pdf.values.tolist()
-    # Recortar textos largos para que quepan bien
     table_data_clean = []
     for row in table_data:
         new_row = [str(cell)[:35] + ("..." if len(str(cell)) > 35 else "") for cell in row]
