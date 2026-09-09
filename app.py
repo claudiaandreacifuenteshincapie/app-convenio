@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import io
 
 # Configuración de página
 st.set_page_config(
@@ -42,7 +43,7 @@ st.markdown("""
 
 # Encabezado
 st.markdown('<p class="main-title">📊 Seguimiento Financiero - Convenio 4600017482</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">Transformación Digital Salud Antioquia | Limpieza de Datos y Lectura Exacta</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">Transformación Digital Salud Antioquia | Descarga en Excel y Limpieza de Datos</p>', unsafe_allow_html=True)
 
 # Presupuestos base
 PRESUPUESTOS = {
@@ -51,7 +52,6 @@ PRESUPUESTOS = {
     "3. Banco IDEA / Rendimientos": 1200000000
 }
 
-# Carga de datos con limpieza automática de encabezados y fila TOTALES
 @st.cache_data(ttl=5)
 def cargar_y_limpiar_excel():
     archivos = [f for f in os.listdir('.') if f.endswith('.xlsx')]
@@ -59,25 +59,23 @@ def cargar_y_limpiar_excel():
         return pd.DataFrame(), None
     
     file_path = archivos[0]
-    
-    # Cargar Excel omitiendo filas superiores de títulos si existen
     df_raw = pd.read_excel(file_path)
     
-    # Si la primera fila contiene los encabezados reales, promoverlos
+    # Promover encabezados reales si existen
     for idx, row in df_raw.iterrows():
-        # Buscar la fila que contiene nombres de columnas reales
         row_str = row.astype(str).str.lower().to_list()
         if any('factura' in x or 'concepto' in x or 'valor' in x or 'pago' in x for x in row_str):
             df_raw.columns = df_raw.iloc[idx]
             df_raw = df_raw.iloc[idx + 1:].reset_index(drop=True)
             break
 
-    # Eliminar filas de totales o vacías
+    # Filtrar filas de totales o vacías
     if not df_raw.empty:
-        # Eliminar si la primera columna dice TOTALES
         col_0 = df_raw.columns[0]
         df_raw = df_raw[~df_raw[col_0].astype(str).str.upper().str.contains("TOTAL", na=False)]
     
+    # Limpieza estricta de NaN para evitar el error de JSON en Streamlit
+    df_raw = df_raw.fillna("").astype(str)
     return df_raw, file_path
 
 df_excel, nombre_archivo = cargar_y_limpiar_excel()
@@ -86,7 +84,7 @@ if "pagos_nuevos" not in st.session_state:
     st.session_state.pagos_nuevos = pd.DataFrame(columns=["Componente", "Factura", "Fecha", "Concepto", "Valor"])
 
 if nombre_archivo:
-    st.success(f"🟢 Lectura limpia activa desde: **{nombre_archivo}**")
+    st.success(f"🟢 Datos conectados desde: **{nombre_archivo}**")
 
 # ----------------------------------------------------
 # SECCIÓN 1: SELECCIÓN DE COMPONENTE
@@ -127,19 +125,19 @@ with st.form("form_nuevo_pago", clear_on_submit=True):
                 "Factura": num_factura,
                 "Fecha": str(fecha_pago),
                 "Concepto": concepto,
-                "Valor": valor_pago
+                "Valor": str(valor_pago)
             }])
             st.session_state.pagos_nuevos = pd.concat([st.session_state.pagos_nuevos, nuevo_registro], ignore_index=True)
-            st.success(f"🎉 ¡Pago de ${valor_pago:,.2f} registrado correctamente!")
+            st.success(f"🎉 ¡Pago por ${valor_pago:,.2f} registrado con éxito!")
 
 st.markdown("---")
 
 # ----------------------------------------------------
-# SECCIÓN 3: MÉTRICAS Y DEDUCCIÓN DE COLUMNAS
+# SECCIÓN 3: MÉTRICAS
 # ----------------------------------------------------
-df_consolidado = pd.concat([df_excel, st.session_state.pagos_nuevos], ignore_index=True)
+df_consolidado = pd.concat([df_excel, st.session_state.pagos_nuevos], ignore_index=True).fillna("")
 
-# Detección inteligente de columna de valor numérico
+# Detección de columna de valor
 col_valor = None
 for c in df_consolidado.columns:
     if any(term in str(c).lower() for term in ['valor', 'monto', 'ejecutado', 'pago', 'unnamed: 3']):
@@ -147,11 +145,10 @@ for c in df_consolidado.columns:
         break
 
 if col_valor:
-    df_consolidado['Valor_Limpio'] = pd.to_numeric(df_consolidado[col_valor], errors='coerce').fillna(0)
+    df_consolidado['Valor_Limpio'] = pd.to_numeric(df_consolidado[col_valor].astype(str).str.replace('$', '').str.replace(',', ''), errors='coerce').fillna(0)
 else:
     df_consolidado['Valor_Limpio'] = 0.0
 
-# Detección inteligente de columna de componente
 col_comp = None
 for c in df_consolidado.columns:
     if any(term in str(c).lower() for term in ['componente', 'modulo', 'convenio']):
@@ -164,13 +161,12 @@ if col_comp:
 else:
     df_filtrado = df_consolidado
 
-# Cálculos
 presupuesto_total = PRESUPUESTOS[componente_sel]
 total_ejecutado = df_filtrado['Valor_Limpio'].sum()
 saldo_disponible = presupuesto_total - total_ejecutado
 pct_ejecucion = (total_ejecutado / presupuesto_total * 100) if presupuesto_total > 0 else 0.0
 
-st.subheader(f"📈 Métricas Calculadas Exactas: {componente_sel}")
+st.subheader(f"📈 Métricas Calculadas: {componente_sel}")
 
 c1, c2, c3 = st.columns(3)
 
@@ -205,7 +201,35 @@ st.progress(min(max(pct_ejecucion / 100, 0.0), 1.0))
 st.markdown("---")
 
 # ----------------------------------------------------
-# SECCIÓN 4: TABLA
+# SECCIÓN 4: TABLA Y DESCARGA EXCEL / CSV
 # ----------------------------------------------------
-st.subheader("📋 Detalle de Registros Leídos")
-st.dataframe(df_consolidado, use_container_width=True)
+st.subheader("📋 Detalle de Registros")
+
+# Reemplazar valores vacíos para que la tabla no genere SyntaxError
+df_mostrar = df_consolidado.drop(columns=['Valor_Limpio'], errors='ignore').astype(str)
+st.dataframe(df_mostrar, use_container_width=True)
+
+col_d1, col_d2 = st.columns(2)
+
+# Generar archivo Excel binario
+buffer_excel = io.BytesIO()
+with pd.ExcelWriter(buffer_excel, engine='openpyxl') as writer:
+    df_mostrar.to_excel(writer, index=False, sheet_name='Reporte_Pagos')
+data_excel = buffer_excel.getvalue()
+
+with col_d1:
+    st.download_button(
+        label="📊 Descargar Reporte en Excel (.xlsx)",
+        data=data_excel,
+        file_name='reporte_consolidado_convenio.xlsx',
+        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
+with col_d2:
+    csv_data = df_mostrar.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📄 Descargar Reporte en CSV (.csv)",
+        data=csv_data,
+        file_name='reporte_consolidado_convenio.csv',
+        mime='text/csv',
+    )
