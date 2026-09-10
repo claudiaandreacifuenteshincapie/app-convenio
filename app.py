@@ -1,15 +1,16 @@
 import streamlit as st
 import pandas as pd
 import os
+import io
 
-# Configuración de página y tema amplio
+# Configuración de página amplia
 st.set_page_config(
     page_title="Seguimiento Convenio 4600017482", 
     page_icon="📊", 
     layout="wide"
 )
 
-# Estilo personalizado para mejorar la interfaz visual
+# Estilos personalizados para mejorar la interfaz
 st.markdown("""
     <style>
     .main-header {
@@ -35,7 +36,6 @@ st.markdown("""
 st.markdown('<div class="main-header">📊 Dashboard de Seguimiento Financiero</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Convenio 4600017482 - Transformación Digital Salud Antioquia</div>', unsafe_allow_html=True)
 
-# Archivo v3 actualizado
 EXCEL_FILE = "Seguimiento Financiero Convenio 4600017482 v3.xlsx"
 
 @st.cache_data(ttl=2)
@@ -46,7 +46,6 @@ def cargar_datos_excel():
     try:
         xls = pd.ExcelFile(EXCEL_FILE)
         
-        # Carga estricta de las hojas solicitadas
         df_convenio = pd.read_excel(xls, sheet_name='EJecucion convenio 46000017482')
         df_cas = pd.read_excel(xls, sheet_name='Ejecución financiera CAS')
         
@@ -57,24 +56,60 @@ def cargar_datos_excel():
     except Exception as e:
         return None, str(e)
 
+def procesar_hoja(df_raw):
+    # Detectar dinámicamente las columnas necesarias sin descartar datos por filas fijas
+    df_items = df_raw.dropna(how='all').copy()
+    
+    # Tomar las primeras 4 columnas
+    df_items = df_items.iloc[:, :4]
+    df_items.columns = ["Fecha / Registro", "Componente", "Soporte / Factura", "Valor Ejecutado ($)"]
+    
+    # Limpieza exhaustiva de valores numéricos
+    df_items["Valor Limpio"] = (
+        df_items["Valor Ejecutado ($)"]
+        .astype(str)
+        .str.replace('$', '', regex=False)
+        .str.replace(',', '', regex=False)
+        .str.replace('.', '', regex=False)
+        .str.strip()
+    )
+    
+    df_items["Valor Ejecutado ($)"] = pd.to_numeric(df_items["Valor Limpio"], errors='coerce').fillna(0)
+    
+    # Exclusión de totales/subtotales
+    palabras_clave = "TOTAL|SUBTOTAL|Total|Subtotal|Aportes entregados|Aportes|Saldo"
+    df_clean = df_items[
+        ~df_items["Fecha / Registro"].astype(str).str.contains(palabras_clave, case=False, na=False) &
+        ~df_items["Componente"].astype(str).str.contains(palabras_clave, case=False, na=False)
+    ].copy()
+    
+    # Manejo de fechas y extracción de año
+    df_clean["Año"] = pd.to_datetime(df_clean["Fecha / Registro"], errors='coerce').dt.year
+    
+    return df_clean
+
+def generar_excel_descarga(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Informe')
+    return output.getvalue()
+
 datos, error = cargar_datos_excel()
 
 if error:
     st.error(f"⚠️ {error}")
-    st.info(f"Asegúrate de que el archivo '{EXCEL_FILE}' esté ubicado correctamente dentro de la carpeta 'MiAppConvenio'.")
+    st.info(f"Asegúrate de que el archivo '{EXCEL_FILE}' esté en la carpeta del proyecto.")
 else:
     st.sidebar.header("⚙️ Panel de Control")
-    st.sidebar.success("✅ Base de Datos v3 Conectada", icon="🔄")
+    st.sidebar.success("✅ Base de Datos Conectada", icon="🔄")
     
     VALOR_TOTAL_CONVENIO = 25982939387
 
-    # Selección de módulo
     modulo = st.sidebar.radio(
-        "Selecciona la Métrica/Hoja:",
+        "Selecciona el Módulo:",
         ["1. Ejecución Convenio", "2. Ejecución Financiera CAS"]
     )
 
-    # Filtro de vigencias (2025 y 2026)
     vigencia = st.sidebar.selectbox(
         "Filtrar por Vigencia:",
         ["Todas las Vigencias (2025 - 2026)", "2025", "2026"]
@@ -85,92 +120,117 @@ else:
 
     if "1. Ejecución Convenio" in modulo:
         st.subheader("📋 Módulo: EJecucion convenio 46000017482")
-        
-        df_raw = datos["convenio"]
-        df_items = df_raw.iloc[7:, [1, 2, 3, 4]].dropna(how='all').copy()
-        df_items.columns = ["Fecha / Registro", "Componente", "Soporte / Factura", "Valor Ejecutado ($)"]
-        
-        df_items["Valor Ejecutado ($)"] = pd.to_numeric(
-            df_items["Valor Ejecutado ($)"].astype(str).str.replace('$', '').str.replace(',', ''), 
-            errors='coerce'
-        ).fillna(0)
-        
-        palabras_clave = "TOTAL|SUBTOTAL|Total|Subtotal|Aportes entregados|Aportes|Saldo"
-        df_clean = df_items[
-            ~df_items["Fecha / Registro"].astype(str).str.contains(palabras_clave, case=False, na=False) &
-            ~df_items["Componente"].astype(str).str.contains(palabras_clave, case=False, na=False)
-        ].copy()
-        
-        df_clean["Año"] = pd.to_datetime(df_clean["Fecha / Registro"], errors='coerce').dt.year
-        df_clean = df_clean[df_clean["Año"].isin([2025, 2026])]
-        
-        if vigencia != "Todas las Vigencias (2025 - 2026)":
-            df_clean = df_clean[df_clean["Año"] == int(vigencia)]
-
-        df_clean["Fecha / Registro"] = df_clean["Fecha / Registro"].astype(str).str.replace(" 00:00:00", "").replace("None", "Sin Fecha")
-        
-        total_ejecutado = df_clean["Valor Ejecutado ($)"].sum()
-        saldo_disponible = VALOR_TOTAL_CONVENIO - total_ejecutado
-        pct_ejecucion = (total_ejecutado / VALOR_TOTAL_CONVENIO) * 100 if VALOR_TOTAL_CONVENIO > 0 else 0
-        
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Presupuesto Total Convenio", f"${VALOR_TOTAL_CONVENIO:,.0f}")
-        col2.metric(f"Ejecutado ({vigencia})", f"${total_ejecutado:,.0f}", f"{pct_ejecucion:.1f}%")
-        col3.metric("Saldo Disponible", f"${saldo_disponible:,.0f}")
-
-        st.markdown("### Avance Financiero Presupuestal")
-        progreso_val = min(max(pct_ejecucion / 100.0, 0.0), 1.0)
-        st.progress(progreso_val, text=f"Porcentaje Ejecutado: {pct_ejecucion:.2f}%")
-
-        st.divider()
-        st.markdown("### 📑 Detalle de Registros y Movimientos")
-        
-        df_display = df_clean[df_clean["Valor Ejecutado ($)"] > 0].drop(columns=["Año"]).copy()
-        df_display["Valor Ejecutado ($)"] = df_display["Valor Ejecutado ($)"].apply(lambda x: f"${x:,.0f}")
-        
-        st.dataframe(df_display.astype(str), use_container_width=True, hide_index=True)
-
+        df_clean = procesar_hoja(datos["convenio"])
+        hoja_actual = 'EJecucion convenio 46000017482'
     else:
         st.subheader("📋 Módulo: Ejecución Financiera CAS")
-        
-        df_raw = datos["cas"]
-        df_items = df_raw.iloc[7:, [1, 2, 3, 4]].dropna(how='all').copy()
-        df_items.columns = ["Fecha / Registro", "Componente", "Soporte / Factura", "Valor Ejecutado ($)"]
-        
-        df_items["Valor Ejecutado ($)"] = pd.to_numeric(
-            df_items["Valor Ejecutado ($)"].astype(str).str.replace('$', '').str.replace(',', ''), 
-            errors='coerce'
-        ).fillna(0)
-        
-        palabras_clave = "TOTAL|SUBTOTAL|Total|Subtotal|Aportes entregados|Aportes|Saldo"
-        df_clean = df_items[
-            ~df_items["Fecha / Registro"].astype(str).str.contains(palabras_clave, case=False, na=False) &
-            ~df_items["Componente"].astype(str).str.contains(palabras_clave, case=False, na=False)
-        ].copy()
-        
-        df_clean["Año"] = pd.to_datetime(df_clean["Fecha / Registro"], errors='coerce').dt.year
-        df_clean = df_clean[df_clean["Año"].isin([2025, 2026])]
-        
-        if vigencia != "Todas las Vigencias (2025 - 2026)":
-            df_clean = df_clean[df_clean["Año"] == int(vigencia)]
+        df_clean = procesar_hoja(datos["cas"])
+        hoja_actual = 'Ejecución financiera CAS'
 
-        df_clean["Fecha / Registro"] = df_clean["Fecha / Registro"].astype(str).str.replace(" 00:00:00", "").replace("None", "Sin Fecha")
+    # Filtrado por vigencia (2025/2026)
+    df_clean = df_clean[df_clean["Año"].isin([2025, 2026]) | df_clean["Año"].isna()]
+    
+    if vigencia != "Todas las Vigencias (2025 - 2026)":
+        df_clean = df_clean[df_clean["Año"] == int(vigencia)]
 
-        total_ejecutado_cas = df_clean["Valor Ejecutado ($)"].sum()
-        pct_cas = (total_ejecutado_cas / VALOR_TOTAL_CONVENIO) * 100 if VALOR_TOTAL_CONVENIO > 0 else 0
-        
-        col1, col2 = st.columns(2)
-        col1.metric(f"Total Ejecutado CAS ({vigencia})", f"${total_ejecutado_cas:,.0f}")
-        col2.metric("Impacto sobre Convenio Total", f"{pct_cas:.2f}%")
+    df_clean["Fecha / Registro"] = df_clean["Fecha / Registro"].astype(str).str.replace(" 00:00:00", "").replace("None", "Sin Fecha")
+    
+    total_ejecutado = df_clean["Valor Ejecutado ($)"].sum()
+    saldo_disponible = VALOR_TOTAL_CONVENIO - total_ejecutado
+    pct_ejecucion = (total_ejecutado / VALOR_TOTAL_CONVENIO) * 100 if VALOR_TOTAL_CONVENIO > 0 else 0
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Presupuesto Total Convenio", f"${VALOR_TOTAL_CONVENIO:,.0f}")
+    col2.metric(f"Ejecutado ({vigencia})", f"${total_ejecutado:,.0f}", f"{pct_ejecucion:.2f}%")
+    col3.metric("Saldo Disponible", f"${saldo_disponible:,.0f}")
 
-        st.markdown("### Porcentaje de Cumplimiento CAS")
-        progreso_val_cas = min(max(pct_cas / 100.0, 0.0), 1.0)
-        st.progress(progreso_val_cas, text=f"Porcentaje Ejecutado CAS: {pct_cas:.2f}%")
+    st.markdown("### Avance Financiero Presupuestal")
+    progreso_val = min(max(pct_ejecucion / 100.0, 0.0), 1.0)
+    st.progress(progreso_val, text=f"Porcentaje Ejecutado: {pct_ejecucion:.2f}%")
 
-        st.divider()
-        st.markdown("### 📑 Detalle de Movimientos Financieros CAS")
-        
-        df_display = df_clean[df_clean["Valor Ejecutado ($)"] > 0].drop(columns=["Año"]).copy()
-        df_display["Valor Ejecutado ($)"] = df_display["Valor Ejecutado ($)"].apply(lambda x: f"${x:,.0f}")
-        
-        st.dataframe(df_display.astype(str), use_container_width=True, hide_index=True)
+    st.divider()
+
+    # Formulario para registrar nuevos pagos o facturas
+    with st.expander("➕ Registrar Nuevo Pago o Factura en Excel"):
+        with st.form("form_registro", clear_on_submit=True):
+            col_f1, col_f2 = st.columns(2)
+            nueva_fecha = col_f1.date_input("Fecha de Registro")
+            nuevo_componente = col_f1.text_input("Componente / Descripción")
+            nuevo_soporte = col_f2.text_input("N° Soporte / Factura")
+            nuevo_valor = col_f2.number_input("Valor Ejecutado ($)", min_value=0.0, step=1000.0)
+            
+            btn_guardar = st.form_submit_button("💾 Guardar Registro")
+            
+            if btn_guardar:
+                if nuevo_componente and nuevo_soporte and nuevo_valor > 0:
+                    nueva_fila = pd.DataFrame([{
+                        "Fecha / Registro": str(nueva_fecha),
+                        "Componente": nuevo_componente,
+                        "Soporte / Factura": nuevo_soporte,
+                        "Valor Ejecutado ($)": nuevo_valor
+                    }])
+                    
+                    # Carga el Excel completo y actualiza la hoja correspondiente
+                    with pd.ExcelWriter(EXCEL_FILE, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
+                        df_existente = pd.read_excel(EXCEL_FILE, sheet_name=hoja_actual)
+                        df_actualizado = pd.concat([df_existente, nueva_fila], ignore_index=True)
+                        df_actualizado.to_excel(writer, sheet_name=hoja_actual, index=False)
+                    
+                    st.success("✅ Registro guardado con éxito en el archivo Excel.")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.warning("⚠️ Por favor completa todos los campos del formulario antes de guardar.")
+
+    st.markdown("### 📑 Detalle de Registros y Movimientos")
+    
+    df_display = df_clean[df_clean["Valor Ejecutado ($)"] > 0].drop(columns=["Año", "Valor Limpio"], errors="ignore").copy()
+    
+    df_export = df_display.copy()
+    df_display["Valor Ejecutado ($)"] = df_display["Valor Ejecutado ($)"].apply(lambda x: f"${x:,.0f}")
+    
+    st.dataframe(df_display.astype(str), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.markdown("### 📥 Exportar Informes")
+    
+    col_exp1, col_exp2 = st.columns(2)
+    
+    # Exportar a Excel
+    excel_data = generar_excel_descarga(df_export)
+    col_exp1.download_button(
+        label="🟢 Descargar Informe en Excel (.xlsx)",
+        data=excel_data,
+        file_name=f"Informe_{modulo.replace(' ', '_')}_{vigencia}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    
+    # Exportar para PDF (HTML Imprimible)
+    html_report = f"""
+    <html>
+    <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 20px; }}
+            h2 {{ color: #1E3A8A; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+            th, td {{ border: 1px solid #dddddd; text-align: left; padding: 8px; }}
+            th {{ background-color: #f2f2f2; }}
+        </style>
+    </head>
+    <body>
+        <h2>Reporte Financiero - Convenio 4600017482</h2>
+        <p><b>Módulo:</b> {modulo}</p>
+        <p><b>Vigencia:</b> {vigencia}</p>
+        <p><b>Total Ejecutado:</b> ${total_ejecutado:,.0f}</p>
+        <hr>
+        {df_display.to_html(index=False)}
+    </body>
+    </html>
+    """
+    
+    col_exp2.download_button(
+        label="🔴 Descargar Informe para PDF (.html / Imprimir)",
+        data=html_report,
+        file_name=f"Informe_{modulo.replace(' ', '_')}_{vigencia}.html",
+        mime="text/html"
+    )
