@@ -32,7 +32,6 @@ def cargar_datos_excel():
     
     try:
         xls = pd.ExcelFile(EXCEL_FILE)
-        # Cargar sin asumir encabezados
         df_convenio = pd.read_excel(xls, sheet_name='EJecucion convenio 46000017482', header=None)
         df_cas = pd.read_excel(xls, sheet_name='Ejecución financiera CAS', header=None)
         
@@ -43,53 +42,76 @@ def cargar_datos_excel():
     except Exception as e:
         return None, str(e)
 
-def procesar_hoja_robusta(df_raw):
+def procesar_hoja_alineada(df_raw):
     if df_raw is None or df_raw.empty:
-        return pd.DataFrame(columns=["Fecha / Registro", "Componente", "Soporte / Factura", "Monto_Numerico", "Año"])
+        return pd.DataFrame()
+
+    # Buscar la fila de encabezados reales que contenga palabras clave
+    header_idx = None
+    for idx, row in df_raw.iterrows():
+        row_str = " ".join([str(val).lower() for val in row.values if pd.notna(val)])
+        if "fecha" in row_str or "componente" in row_str or "soporte" in row_str or "factura" in row_str or "valor" in row_str:
+            header_idx = idx
+            break
+
+    if header_idx is not None:
+        # Tomar los datos a partir de la fila siguiente al encabezado
+        df_data = df_raw.iloc[header_idx + 1:].copy().reset_index(drop=True)
+    else:
+        df_data = df_raw.copy()
+
+    # Eliminar columnas completamente vacías
+    df_data = df_data.dropna(how='all', axis=1)
+
+    registros = []
     
-    filas_procesadas = []
-    
-    # Recorrer cada fila del archivo
-    for _, row in df_raw.iterrows():
-        # Convertir toda la fila a texto para análisis
-        valores = [str(val).strip() for val in row.values if pd.notna(val) and str(val).strip() != ""]
-        texto_fila = " ".join(valores).lower()
-        
-        # Saltar filas de totales, encabezados o resúmenes
-        if any(p in texto_fila for p in ["total", "subtotal", "presupuesto", "saldo", "convenio", "vigencia"]):
+    for _, row in df_data.iterrows():
+        vals = [val for val in row.values if pd.notna(val) and str(val).strip() != ""]
+        if len(vals) < 2:
             continue
-            
-        # Verificar si la fila contiene datos reales (al menos 2 columnas con información)
-        if len(valores) >= 2:
-            fecha_val = str(row.iloc[0]) if len(row) > 0 and pd.notna(row.iloc[0]) else "Sin Fecha"
-            componente_val = str(row.iloc[1]) if len(row) > 1 and pd.notna(row.iloc[1]) else ""
-            soporte_val = str(row.iloc[2]) if len(row) > 2 and pd.notna(row.iloc[2]) else ""
-            monto_raw = str(row.iloc[3]) if len(row) > 3 and pd.notna(row.iloc[3]) else "0"
+        
+        row_str = " ".join([str(v) for v in vals]).lower()
+        if "total" in row_str or "subtotal" in row_str or "convenio" in row_str:
+            continue
 
-            # Limpiar valor numérico
-            monto_clean = re.sub(r'[^\d.]', '', monto_raw.replace(',', '.'))
-            try:
-                monto_num = float(monto_clean)
-            except:
-                monto_num = 0.0
+        # Detección inteligente de columnas por tipo de contenido
+        fecha, componente, soporte, monto_num, anio = "Sin Fecha", "CAS", "", 0.0, "Sin Año"
+        
+        for v in vals:
+            v_str = str(v).strip()
+            # Buscar fecha (dd/mm/yyyy o yyyy-mm-dd)
+            if re.search(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}', v_str) or re.search(r'202[4-9]', v_str):
+                if fecha == "Sin Fecha":
+                    fecha = v_str.replace(" 00:00:00", "")
+                    match_anio = re.search(r'(202[4-9])', v_str)
+                    if match_anio:
+                        anio = match_anio.group(1)
+            # Buscar factura / soporte
+            elif re.search(r'factura|soporte|fac|doc|nr|n°', v_str.lower()) or (v_str.isalnum() and not v_str.isdigit() and len(v_str) > 3):
+                soporte = v_str
+            # Buscar monto numérico elevado
+            elif isinstance(v, (int, float)) or (isinstance(v, str) and re.search(r'\d+', v)):
+                monto_clean = re.sub(r'[^\d.]', '', v_str.replace('.', '').replace(',', '.'))
+                try:
+                    num = float(monto_clean)
+                    if num > 1000: # Evita tomar el número de ítem/secuencia como valor
+                        monto_num = num
+                except:
+                    pass
+            # Texto descriptivo / componente
+            elif len(v_str) > 2 and not v_str.replace('.', '').isdigit():
+                componente = v_str
 
-            # Extraer el año del texto de la fecha o de la fila completa
-            match_anio = re.search(r'(202[4-9])', texto_fila)
-            anio_str = match_anio.group(1) if match_anio else "Sin Año"
-
-            # Omitir filas sin contenido válido o sin montos si son encabezados flotantes
-            if componente_val.lower() in ["componente", "descripción", "concepto", "nan", "none"]:
-                continue
-
-            filas_procesadas.append({
-                "Fecha / Registro": fecha_val.replace(" 00:00:00", ""),
-                "Componente": componente_val,
-                "Soporte / Factura": soporte_val,
+        if monto_num > 0 or fecha != "Sin Fecha":
+            registros.append({
+                "Fecha / Registro": fecha,
+                "Componente": componente,
+                "Soporte / Factura": soporte if soporte else "S/D",
                 "Monto_Numerico": monto_num,
-                "Año": anio_str
+                "Año": anio
             })
 
-    return pd.DataFrame(filas_procesadas)
+    return pd.DataFrame(registros)
 
 def generar_excel_descarga(df):
     output = io.BytesIO()
@@ -123,17 +145,16 @@ else:
 
     if "1. Ejecución Convenio" in modulo:
         st.subheader("📋 Módulo: EJecucion convenio 46000017482")
-        df_clean = procesar_hoja_robusta(datos["convenio"])
+        df_clean = procesar_hoja_alineada(datos["convenio"])
         hoja_actual = 'EJecucion convenio 46000017482'
     else:
         st.subheader("📋 Módulo: Ejecución Financiera CAS")
-        df_clean = procesar_hoja_robusta(datos["cas"])
+        df_clean = procesar_hoja_alineada(datos["cas"])
         hoja_actual = 'Ejecución financiera CAS'
 
-    # Aplicar Filtro de Vigencia
+    # Filtrar por año
     if vigencia != "Todas las Vigencias (2025 - 2026)" and not df_clean.empty:
         df_filtrado = df_clean[df_clean["Año"] == str(vigencia)].copy()
-        # Si no detecta año explícito en la columna, mostrar los registros existentes sin bloquear
         if df_filtrado.empty:
             df_filtrado = df_clean.copy()
     else:
@@ -154,7 +175,7 @@ else:
 
     st.divider()
 
-    # Formulario para registrar nuevos pagos
+    # Formulario
     with st.expander("➕ Registrar Nuevo Pago o Factura en Excel"):
         with st.form("form_registro", clear_on_submit=True):
             col_f1, col_f2 = st.columns(2)
@@ -199,7 +220,7 @@ else:
         
         st.dataframe(df_display.astype(str), use_container_width=True, hide_index=True)
     else:
-        st.warning("No se encontraron registros de ejecuciones para el filtro seleccionado.")
+        st.warning("No se encontraron registros válidos.")
 
     st.divider()
     st.markdown("### 📥 Exportar Informes")
