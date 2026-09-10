@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import io
+import re
 
 # Configuración de página amplia
 st.set_page_config(
@@ -56,15 +57,24 @@ def cargar_datos_excel():
     except Exception as e:
         return None, str(e)
 
+def extraer_anio(val):
+    val_str = str(val).strip()
+    # Buscar año de 4 dígitos (2025 o 2026) en la cadena de texto
+    match = re.search(r'202[4-9]', val_str)
+    if match:
+        return int(match.group(0))
+    # Intentar parseo nativo de fecha si no coincide con regex simple
+    dt = pd.to_datetime(val_str, errors='coerce', dayfirst=True)
+    if pd.notna(dt):
+        return dt.year
+    return None
+
 def procesar_hoja(df_raw):
-    # Detección flexible de datos independientemente de la fila de inicio
-    df_raw = df_raw.dropna(how='all').copy()
+    df_items = df_raw.dropna(how='all').copy()
     
-    # Buscar dinámicamente la columna que contiene fechas o valores numéricos
-    col_seleccionadas = df_raw.iloc[:, :4]
+    col_seleccionadas = df_items.iloc[:, :4]
     col_seleccionadas.columns = ["Fecha / Registro", "Componente", "Soporte / Factura", "Valor Ejecutado ($)"]
     
-    # Convertir a texto y limpiar caracteres numéricos
     val_limpio = (
         col_seleccionadas["Valor Ejecutado ($)"]
         .astype(str)
@@ -75,15 +85,14 @@ def procesar_hoja(df_raw):
     
     col_seleccionadas["Valor Ejecutado ($)"] = pd.to_numeric(val_limpio, errors='coerce').fillna(0)
     
-    # Filtrar marcas de agua, encabezados duplicados y resúmenes de totalización
     palabras_clave = "TOTAL|SUBTOTAL|Total|Subtotal|Aportes|Saldo|Componente|Fecha"
     df_clean = col_seleccionadas[
         ~col_seleccionadas["Fecha / Registro"].astype(str).str.contains(palabras_clave, case=False, na=False) &
         ~col_seleccionadas["Componente"].astype(str).str.contains(palabras_clave, case=False, na=False)
     ].copy()
     
-    # Extraer año de la fecha
-    df_clean["Año"] = pd.to_datetime(df_clean["Fecha / Registro"], errors='coerce').dt.year
+    # Extraer el año garantizando formatos colombianos (DD/MM/YYYY) o texto plano
+    df_clean["Año"] = df_clean["Fecha / Registro"].apply(extraer_anio)
     
     return df_clean
 
@@ -126,9 +135,7 @@ else:
         df_clean = procesar_hoja(datos["cas"])
         hoja_actual = 'Ejecución financiera CAS'
 
-    # Filtrar por años válidos (2025 / 2026 o registros sin año detectado explícitamente)
-    df_clean = df_clean[(df_clean["Año"].isin([2025, 2026])) | (df_clean["Año"].isna())]
-    
+    # Aplicación del filtro por vigencia
     if vigencia != "Todas las Vigencias (2025 - 2026)":
         df_clean = df_clean[df_clean["Año"] == int(vigencia)]
 
@@ -196,7 +203,7 @@ else:
     
     col_exp1, col_exp2 = st.columns(2)
     
-    # Exportar a Excel usando openpyxl
+    # Exportar a Excel
     excel_data = generar_excel_descarga(df_export)
     col_exp1.download_button(
         label="🟢 Descargar Informe en Excel (.xlsx)",
