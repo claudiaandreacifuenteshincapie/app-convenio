@@ -10,7 +10,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilos personalizados para mejorar la interfaz
+# Estilos personalizados para la interfaz
 st.markdown("""
     <style>
     .main-header {
@@ -57,40 +57,39 @@ def cargar_datos_excel():
         return None, str(e)
 
 def procesar_hoja(df_raw):
-    # Detectar dinámicamente las columnas necesarias sin descartar datos por filas fijas
-    df_items = df_raw.dropna(how='all').copy()
+    # Detección flexible de datos independientemente de la fila de inicio
+    df_raw = df_raw.dropna(how='all').copy()
     
-    # Tomar las primeras 4 columnas
-    df_items = df_items.iloc[:, :4]
-    df_items.columns = ["Fecha / Registro", "Componente", "Soporte / Factura", "Valor Ejecutado ($)"]
+    # Buscar dinámicamente la columna que contiene fechas o valores numéricos
+    col_seleccionadas = df_raw.iloc[:, :4]
+    col_seleccionadas.columns = ["Fecha / Registro", "Componente", "Soporte / Factura", "Valor Ejecutado ($)"]
     
-    # Limpieza exhaustiva de valores numéricos
-    df_items["Valor Limpio"] = (
-        df_items["Valor Ejecutado ($)"]
+    # Convertir a texto y limpiar caracteres numéricos
+    val_limpio = (
+        col_seleccionadas["Valor Ejecutado ($)"]
         .astype(str)
         .str.replace('$', '', regex=False)
         .str.replace(',', '', regex=False)
-        .str.replace('.', '', regex=False)
         .str.strip()
     )
     
-    df_items["Valor Ejecutado ($)"] = pd.to_numeric(df_items["Valor Limpio"], errors='coerce').fillna(0)
+    col_seleccionadas["Valor Ejecutado ($)"] = pd.to_numeric(val_limpio, errors='coerce').fillna(0)
     
-    # Exclusión de totales/subtotales
-    palabras_clave = "TOTAL|SUBTOTAL|Total|Subtotal|Aportes entregados|Aportes|Saldo"
-    df_clean = df_items[
-        ~df_items["Fecha / Registro"].astype(str).str.contains(palabras_clave, case=False, na=False) &
-        ~df_items["Componente"].astype(str).str.contains(palabras_clave, case=False, na=False)
+    # Filtrar marcas de agua, encabezados duplicados y resúmenes de totalización
+    palabras_clave = "TOTAL|SUBTOTAL|Total|Subtotal|Aportes|Saldo|Componente|Fecha"
+    df_clean = col_seleccionadas[
+        ~col_seleccionadas["Fecha / Registro"].astype(str).str.contains(palabras_clave, case=False, na=False) &
+        ~col_seleccionadas["Componente"].astype(str).str.contains(palabras_clave, case=False, na=False)
     ].copy()
     
-    # Manejo de fechas y extracción de año
+    # Extraer año de la fecha
     df_clean["Año"] = pd.to_datetime(df_clean["Fecha / Registro"], errors='coerce').dt.year
     
     return df_clean
 
 def generar_excel_descarga(df):
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Informe')
     return output.getvalue()
 
@@ -98,7 +97,7 @@ datos, error = cargar_datos_excel()
 
 if error:
     st.error(f"⚠️ {error}")
-    st.info(f"Asegúrate de que el archivo '{EXCEL_FILE}' esté en la carpeta del proyecto.")
+    st.info(f"Asegúrate de que el archivo '{EXCEL_FILE}' esté subido en GitHub.")
 else:
     st.sidebar.header("⚙️ Panel de Control")
     st.sidebar.success("✅ Base de Datos Conectada", icon="🔄")
@@ -127,8 +126,8 @@ else:
         df_clean = procesar_hoja(datos["cas"])
         hoja_actual = 'Ejecución financiera CAS'
 
-    # Filtrado por vigencia (2025/2026)
-    df_clean = df_clean[df_clean["Año"].isin([2025, 2026]) | df_clean["Año"].isna()]
+    # Filtrar por años válidos (2025 / 2026 o registros sin año detectado explícitamente)
+    df_clean = df_clean[(df_clean["Año"].isin([2025, 2026])) | (df_clean["Año"].isna())]
     
     if vigencia != "Todas las Vigencias (2025 - 2026)":
         df_clean = df_clean[df_clean["Año"] == int(vigencia)]
@@ -159,7 +158,7 @@ else:
             nuevo_soporte = col_f2.text_input("N° Soporte / Factura")
             nuevo_valor = col_f2.number_input("Valor Ejecutado ($)", min_value=0.0, step=1000.0)
             
-            btn_guardar = st.form_submit_button("💾 Guardar Registro")
+            btn_guardar = st.form_submit_button("💾 Guardar Registro en Excel")
             
             if btn_guardar:
                 if nuevo_componente and nuevo_soporte and nuevo_valor > 0:
@@ -170,25 +169,26 @@ else:
                         "Valor Ejecutado ($)": nuevo_valor
                     }])
                     
-                    # Carga el Excel completo y actualiza la hoja correspondiente
-                    with pd.ExcelWriter(EXCEL_FILE, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
-                        df_existente = pd.read_excel(EXCEL_FILE, sheet_name=hoja_actual)
-                        df_actualizado = pd.concat([df_existente, nueva_fila], ignore_index=True)
-                        df_actualizado.to_excel(writer, sheet_name=hoja_actual, index=False)
-                    
-                    st.success("✅ Registro guardado con éxito en el archivo Excel.")
-                    st.cache_data.clear()
-                    st.rerun()
+                    try:
+                        with pd.ExcelWriter(EXCEL_FILE, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
+                            df_existente = pd.read_excel(EXCEL_FILE, sheet_name=hoja_actual)
+                            df_actualizado = pd.concat([df_existente, nueva_fila], ignore_index=True)
+                            df_actualizado.to_excel(writer, sheet_name=hoja_actual, index=False)
+                        
+                        st.success("✅ Registro guardado con éxito en el archivo Excel.")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"No se pudo guardar el registro: {ex}")
                 else:
-                    st.warning("⚠️ Por favor completa todos los campos del formulario antes de guardar.")
+                    st.warning("⚠️ Por favor completa todos los campos con información válida.")
 
     st.markdown("### 📑 Detalle de Registros y Movimientos")
     
-    df_display = df_clean[df_clean["Valor Ejecutado ($)"] > 0].drop(columns=["Año", "Valor Limpio"], errors="ignore").copy()
-    
+    df_display = df_clean[df_clean["Valor Ejecutado ($)"] > 0].drop(columns=["Año"], errors="ignore").copy()
     df_export = df_display.copy()
-    df_display["Valor Ejecutado ($)"] = df_display["Valor Ejecutado ($)"].apply(lambda x: f"${x:,.0f}")
     
+    df_display["Valor Ejecutado ($)"] = df_display["Valor Ejecutado ($)"].apply(lambda x: f"${x:,.0f}")
     st.dataframe(df_display.astype(str), use_container_width=True, hide_index=True)
 
     st.divider()
@@ -196,7 +196,7 @@ else:
     
     col_exp1, col_exp2 = st.columns(2)
     
-    # Exportar a Excel
+    # Exportar a Excel usando openpyxl
     excel_data = generar_excel_descarga(df_export)
     col_exp1.download_button(
         label="🟢 Descargar Informe en Excel (.xlsx)",
