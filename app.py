@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import os
 import io
-import re
 
 # Configuración de página amplia
 st.set_page_config(
@@ -57,44 +56,44 @@ def cargar_datos_excel():
     except Exception as e:
         return None, str(e)
 
-def extraer_anio(val):
-    val_str = str(val).strip()
-    # Buscar año de 4 dígitos (2025 o 2026) en la cadena de texto
-    match = re.search(r'202[4-9]', val_str)
-    if match:
-        return int(match.group(0))
-    # Intentar parseo nativo de fecha si no coincide con regex simple
-    dt = pd.to_datetime(val_str, errors='coerce', dayfirst=True)
-    if pd.notna(dt):
-        return dt.year
-    return None
-
 def procesar_hoja(df_raw):
-    df_items = df_raw.dropna(how='all').copy()
+    # Hacer una copia limpia
+    df = df_raw.dropna(how='all').copy()
     
-    col_seleccionadas = df_items.iloc[:, :4]
-    col_seleccionadas.columns = ["Fecha / Registro", "Componente", "Soporte / Factura", "Valor Ejecutado ($)"]
+    # Asignar nombres a las primeras 4 columnas
+    cols = df.columns[:4]
+    df_sub = df[cols].copy()
+    df_sub.columns = ["Fecha / Registro", "Componente", "Soporte / Factura", "Valor Ejecutado ($)"]
     
-    val_limpio = (
-        col_seleccionadas["Valor Ejecutado ($)"]
-        .astype(str)
-        .str.replace('$', '', regex=False)
-        .str.replace(',', '', regex=False)
-        .str.strip()
+    # Limpieza de montos financieros
+    def limpiar_monto(val):
+        val_str = str(val).replace('$', '').replace(',', '').replace('.', '').strip()
+        try:
+            return float(val_str)
+        except:
+            return 0.0
+
+    df_sub["Monto_Numerico"] = df_sub["Valor Ejecutado ($)"].apply(limpiar_monto)
+    
+    # Filtrar filas que son totales, encabezados o vacías
+    palabras_basura = ["total", "subtotal", "saldo", "componente", "fecha / registro", "nan", "none"]
+    
+    def es_fila_valida(row):
+        col0 = str(row["Fecha / Registro"]).lower().strip()
+        col1 = str(row["Componente"]).lower().strip()
+        if any(p in col0 for p in palabras_basura) or any(p in col1 for p in palabras_basura):
+            return False
+        return True
+
+    df_filtrado = df_sub[df_sub.apply(es_fila_valida, axis=1)].copy()
+    
+    # Extraer el año
+    df_filtrado["Año"] = pd.to_datetime(df_filtrado["Fecha / Registro"], errors='coerce', dayfirst=True).dt.year
+    df_filtrado["Año"] = df_filtrado["Año"].fillna(
+        df_filtrado["Fecha / Registro"].astype(str).str.extract(r'(202[4-9])')[0]
     )
     
-    col_seleccionadas["Valor Ejecutado ($)"] = pd.to_numeric(val_limpio, errors='coerce').fillna(0)
-    
-    palabras_clave = "TOTAL|SUBTOTAL|Total|Subtotal|Aportes|Saldo|Componente|Fecha"
-    df_clean = col_seleccionadas[
-        ~col_seleccionadas["Fecha / Registro"].astype(str).str.contains(palabras_clave, case=False, na=False) &
-        ~col_seleccionadas["Componente"].astype(str).str.contains(palabras_clave, case=False, na=False)
-    ].copy()
-    
-    # Extraer el año garantizando formatos colombianos (DD/MM/YYYY) o texto plano
-    df_clean["Año"] = df_clean["Fecha / Registro"].apply(extraer_anio)
-    
-    return df_clean
+    return df_filtrado
 
 def generar_excel_descarga(df):
     output = io.BytesIO()
@@ -135,13 +134,20 @@ else:
         df_clean = procesar_hoja(datos["cas"])
         hoja_actual = 'Ejecución financiera CAS'
 
-    # Aplicación del filtro por vigencia
+    # Aplicar filtro por año
     if vigencia != "Todas las Vigencias (2025 - 2026)":
-        df_clean = df_clean[df_clean["Año"] == int(vigencia)]
+        df_display_base = df_clean[df_clean["Año"].astype(str).str.contains(str(vigencia), na=False)]
+    else:
+        df_display_base = df_clean.copy()
 
-    df_clean["Fecha / Registro"] = df_clean["Fecha / Registro"].astype(str).str.replace(" 00:00:00", "").replace("None", "Sin Fecha")
+    df_display_base["Fecha / Registro"] = (
+        df_display_base["Fecha / Registro"]
+        .astype(str)
+        .str.replace(" 00:00:00", "")
+        .str.replace("None", "Sin Fecha")
+    )
     
-    total_ejecutado = df_clean["Valor Ejecutado ($)"].sum()
+    total_ejecutado = df_display_base["Monto_Numerico"].sum()
     saldo_disponible = VALOR_TOTAL_CONVENIO - total_ejecutado
     pct_ejecucion = (total_ejecutado / VALOR_TOTAL_CONVENIO) * 100 if VALOR_TOTAL_CONVENIO > 0 else 0
     
@@ -192,11 +198,13 @@ else:
 
     st.markdown("### 📑 Detalle de Registros y Movimientos")
     
-    df_display = df_clean[df_clean["Valor Ejecutado ($)"] > 0].drop(columns=["Año"], errors="ignore").copy()
-    df_export = df_display.copy()
+    df_tabla = df_display_base[["Fecha / Registro", "Componente", "Soporte / Factura", "Monto_Numerico"]].copy()
+    df_tabla.columns = ["Fecha / Registro", "Componente", "Soporte / Factura", "Valor Ejecutado ($)"]
     
-    df_display["Valor Ejecutado ($)"] = df_display["Valor Ejecutado ($)"].apply(lambda x: f"${x:,.0f}")
-    st.dataframe(df_display.astype(str), use_container_width=True, hide_index=True)
+    df_export = df_tabla.copy()
+    df_tabla["Valor Ejecutado ($)"] = df_tabla["Valor Ejecutado ($)"].apply(lambda x: f"${x:,.0f}")
+    
+    st.dataframe(df_tabla.astype(str), use_container_width=True, hide_index=True)
 
     st.divider()
     st.markdown("### 📥 Exportar Informes")
@@ -212,7 +220,7 @@ else:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     
-    # Exportar para PDF (HTML Imprimible)
+    # Exportar para PDF
     html_report = f"""
     <html>
     <head>
@@ -230,7 +238,7 @@ else:
         <p><b>Vigencia:</b> {vigencia}</p>
         <p><b>Total Ejecutado:</b> ${total_ejecutado:,.0f}</p>
         <hr>
-        {df_display.to_html(index=False)}
+        {df_tabla.to_html(index=False)}
     </body>
     </html>
     """
