@@ -1,11 +1,6 @@
 import streamlit as st
 import pandas as pd
 import io
-import plotly.graph_objects as go
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib import colors
 
 # Configuración de página
 st.set_page_config(
@@ -110,10 +105,8 @@ if archivo_excel is not None:
         else:
             df_excel = pd.read_excel(archivo_excel)
         
-        # Normalizar nombres de columnas
         df_excel.columns = [str(c).strip() for c in df_excel.columns]
         
-        # Mapeo inteligente si faltan columnas
         if "Vigencia" not in df_excel.columns:
             df_excel["Vigencia"] = vigencia_sel
         if "Componente" not in df_excel.columns:
@@ -126,13 +119,13 @@ if archivo_excel is not None:
         if "Concepto" not in df_excel.columns:
             df_excel["Concepto"] = "Registro importado de archivo"
         if "Valor" not in df_excel.columns:
-            posibles_val = [c for c in df_excel.columns if 'valor' in c.lower() or 'total' in c.lower() or c.startswith('Unnamed')]
+            posibles_val = [c for c in df_excel.columns if 'valor' in c.lower() or 'total' in c.lower()]
             df_excel["Valor"] = df_excel[posibles_val[0]] if posibles_val else 0.0
 
         st.session_state.historico_pagos = pd.concat([st.session_state.historico_pagos, df_excel], ignore_index=True).drop_duplicates()
         st.sidebar.success("¡Base de datos cargada y sincronizada con éxito!")
     except Exception as e:
-        st.sidebar.error(f"No se pudo leer el archivo correctamente: {e}")
+        st.sidebar.error(f"No se pudo leer el archivo: {e}")
 
 # SELECCIÓN DE COMPONENTE
 st.subheader(f"1️⃣ Componente a Consultar - Vigencia {vigencia_sel}")
@@ -162,8 +155,8 @@ total_ejecutado = df_modulo["Valor"].sum() if not df_modulo.empty else 0.0
 saldo_disponible = presupuesto_total - total_ejecutado
 pct_ejecucion = (total_ejecutado / presupuesto_total * 100) if presupuesto_total > 0 else 0.0
 
-# TARJETAS DE MÉTRICAS Y GRÁFICO
-col_m1, col_m2, col_m3, col_g = st.columns([1.5, 1.5, 1.5, 0.8])
+# TARJETAS DE MÉTRICAS Y BARRA DE PROGRESO NATIVA
+col_m1, col_m2, col_m3 = st.columns(3)
 
 with col_m1:
     st.markdown(f"""
@@ -191,26 +184,8 @@ with col_m3:
         </div>
     """, unsafe_allow_html=True)
 
-with col_g:
-    labels = ['Ejecutado', 'Disponible']
-    values = [max(total_ejecutado, 0), max(saldo_disponible, 0)]
-    
-    fig = go.Figure(data=[go.Pie(
-        labels=labels, 
-        values=values, 
-        hole=.6,
-        marker_colors=['#2563EB', '#10B981'],
-        textinfo='none',
-        hoverinfo='label+percent',
-        showlegend=False
-    )])
-    fig.update_layout(
-        margin=dict(t=10, b=10, l=10, r=10),
-        height=100,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)'
-    )
-    st.plotly_chart(fig, use_container_width=True)
+st.markdown("<br>", unsafe_allow_html=True)
+st.progress(min(max(pct_ejecucion / 100.0, 0.0), 1.0), text=f"Progreso de Ejecución Vigencia {vigencia_sel}: {pct_ejecucion:.1f}%")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -231,79 +206,13 @@ with tab1:
                 df.to_excel(writer, index=False, sheet_name=f'Historico_{vigencia_sel}')
             return output.getvalue()
 
-        def generar_pdf(df, componente, presupuesto, ejecutado, saldo, vigencia):
-            buffer = io.BytesIO()
-            doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
-            elements = []
-            styles = getSampleStyleSheet()
-
-            elements.append(Paragraph(f"<b>Reporte Financiero - Vigencia {vigencia}</b>", styles['Title']))
-            elements.append(Paragraph(f"<b>Convenio:</b> 4600017482 | <b>Módulo:</b> {componente}", styles['Heading2']))
-            elements.append(Spacer(1, 10))
-
-            resumen_data = [
-                ["Presupuesto Asignado", "Total Ejecutado", "Saldo Disponible"],
-                [f"${presupuesto:,.0f}", f"${ejecutado:,.0f}", f"${saldo:,.0f}"]
-            ]
-            resumen_table = Table(resumen_data, colWidths=[180, 180, 180])
-            resumen_table.setStyle(TableStyle([
-                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0F172A')),
-                ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('BOTTOMPADDING', (0,0), (-1,0), 6),
-                ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#F8FAFC')),
-                ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#E2E8F0'))
-            ]))
-            elements.append(resumen_table)
-            elements.append(Spacer(1, 20))
-
-            elements.append(Paragraph("<b>Detalle Histórico de Pagos</b>", styles['Heading3']))
-            tabla_data = [["Vigencia", "Componente", "Factura", "Fecha", "Concepto", "Valor ($)"]]
-            for _, row in df.iterrows():
-                tabla_data.append([
-                    str(row.get('Vigencia', '')),
-                    str(row.get('Componente', '')),
-                    str(row.get('Factura', '')),
-                    str(row.get('Fecha', '')),
-                    str(row.get('Concepto', '')),
-                    f"${row.get('Valor', 0):,.2f}"
-                ])
-            
-            tabla = Table(tabla_data, colWidths=[60, 110, 70, 65, 135, 90])
-            tabla.setStyle(TableStyle([
-                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2563EB')),
-                ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,-1), 8),
-                ('BOTTOMPADDING', (0,0), (-1,0), 4),
-                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1'))
-            ]))
-            elements.append(tabla)
-            doc.build(elements)
-            buffer.seek(0)
-            return buffer.getvalue()
-
-        col_dl1, col_dl2 = st.columns(2)
-        
-        with col_dl1:
-            st.download_button(
-                label=f"📥 Descargar Histórico Vigencia {vigencia_sel} (Excel)",
-                data=generar_excel(df_modulo),
-                file_name=f"historico_{vigencia_sel}_{componente_sel.split('.')[0]}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-
-        with col_dl2:
-            st.download_button(
-                label=f"📄 Descargar Reporte Vigencia {vigencia_sel} (PDF)",
-                data=generar_pdf(df_modulo, componente_sel, presupuesto_total, total_ejecutado, saldo_disponible, vigencia_sel),
-                file_name=f"reporte_{vigencia_sel}_{componente_sel.split('.')[0]}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
+        st.download_button(
+            label=f"📥 Descargar Histórico Vigencia {vigencia_sel} (Excel)",
+            data=generar_excel(df_modulo),
+            file_name=f"historico_{vigencia_sel}_{componente_sel.split('.')[0]}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
     else:
         st.info(f"No hay registros disponibles para la vigencia {vigencia_sel} y el componente seleccionado.")
 
