@@ -56,12 +56,15 @@ else:
         
         df_cas_raw = datos["cas"]
         
-        # Filtramos la tabla de facturas de la hoja CAS
+        # Omitimos las filas iniciales de encabezado
         cas_items = df_cas_raw.iloc[7:, [1, 2, 3, 4]].dropna(how='all')
         cas_items.columns = ["Componente", "Fecha", "Soporte / Factura", "Valor Ejecutado ($)"]
-        cas_items["Valor Ejecutado ($)"] = pd.to_numeric(cas_items["Valor Ejecutado ($)"], errors='coerce').fillna(0)
+        cas_items["Valor Ejecutado ($)"] = pd.to_numeric(cas_items["Valor Ejecutado ($)"].astype(str).str.replace('$', '').str.replace(',', ''), errors='coerce').fillna(0)
         
-        total_ejecutado_cas = cas_items["Valor Ejecutado ($)"].sum()
+        # Excluimos filas de totales/subtotales para evitar doble conteo
+        cas_items_clean = cas_items[~cas_items["Componente"].astype(str).str.contains("TOTAL|SUBTOTAL|Total|Subtotal", case=False, na=False)].copy()
+        
+        total_ejecutado_cas = cas_items_clean["Valor Ejecutado ($)"].sum()
         saldo_cas = VALOR_TOTAL_CAS - total_ejecutado_cas
         pct_cas = (total_ejecutado_cas / VALOR_TOTAL_CAS) * 100 if VALOR_TOTAL_CAS > 0 else 0
         
@@ -70,12 +73,14 @@ else:
         col2.metric("Total Ejecutado", f"${total_ejecutado_cas:,.0f}", f"{pct_cas:.1f}%")
         col3.metric("Saldo Disponible", f"${saldo_cas:,.0f}")
 
-        st.progress(pct_cas / 100, text=f"Porcentaje de Ejecución CAS: {pct_cas:.1f}%")
+        # Limitamos el valor entre 0.0 y 1.0 para que Streamlit no arroje error
+        progreso_val = min(max(pct_cas / 100.0, 0.0), 1.0)
+        st.progress(progreso_val, text=f"Porcentaje de Ejecución CAS: {pct_cas:.1f}%")
 
         st.divider()
         st.subheader("📋 Registro Histórico de Pagos (Leído desde Excel)")
         
-        cas_items_display = cas_items[cas_items["Valor Ejecutado ($)"] > 0].copy()
+        cas_items_display = cas_items_clean[cas_items_clean["Valor Ejecutado ($)"] > 0].copy()
         cas_items_display["Valor Ejecutado ($)"] = cas_items_display["Valor Ejecutado ($)"].apply(lambda x: f"${x:,.0f}")
         st.dataframe(cas_items_display, use_container_width=True)
 
@@ -85,9 +90,11 @@ else:
         df_crue_raw = datos["crue"]
         crue_items = df_crue_raw.iloc[8:, [1, 2, 3]].dropna(how='all')
         crue_items.columns = ["Fecha", "Valor Ejecutado ($)", "Porcentaje"]
-        crue_items["Valor Ejecutado ($)"] = pd.to_numeric(crue_items["Valor Ejecutado ($)"], errors='coerce').fillna(0)
+        crue_items["Valor Ejecutado ($)"] = pd.to_numeric(crue_items["Valor Ejecutado ($)"].astype(str).str.replace('$', '').str.replace(',', ''), errors='coerce').fillna(0)
         
-        total_ejecutado_crue = crue_items["Valor Ejecutado ($)"].sum()
+        crue_items_clean = crue_items[~crue_items["Fecha"].astype(str).str.contains("TOTAL|SUBTOTAL|Total|Subtotal", case=False, na=False)].copy()
+        
+        total_ejecutado_crue = crue_items_clean["Valor Ejecutado ($)"].sum()
         saldo_crue = VALOR_TOTAL_CRUE - total_ejecutado_crue
         pct_crue = (total_ejecutado_crue / VALOR_TOTAL_CRUE) * 100 if VALOR_TOTAL_CRUE > 0 else 0
         
@@ -96,11 +103,12 @@ else:
         col2.metric("Total Ejecutado", f"${total_ejecutado_crue:,.0f}", f"{pct_crue:.1f}%")
         col3.metric("Saldo Disponible", f"${saldo_crue:,.0f}")
 
-        st.progress(pct_crue / 100, text=f"Porcentaje de Ejecución CRUE: {pct_crue:.1f}%")
+        progreso_val_crue = min(max(pct_crue / 100.0, 0.0), 1.0)
+        st.progress(progreso_val_crue, text=f"Porcentaje de Ejecución CRUE: {pct_crue:.1f}%")
 
         st.divider()
         st.subheader("📋 Movimientos del Componente CRUE")
-        crue_display = crue_items[crue_items["Valor Ejecutado ($)"] > 0].copy()
+        crue_display = crue_items_clean[crue_items_clean["Valor Ejecutado ($)"] > 0].copy()
         crue_display["Valor Ejecutado ($)"] = crue_display["Valor Ejecutado ($)"].apply(lambda x: f"${x:,.0f}")
         st.dataframe(crue_display, use_container_width=True)
 
